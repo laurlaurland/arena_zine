@@ -176,17 +176,16 @@ export async function validateToken(token: string): Promise<ArenaMe> {
 }
 
 export async function fetchUserChannels(userSlug: string): Promise<ArenaChannel[]> {
-  // v3 uses /users/{slug}/contents — filter to type === 'Channel'
+  // /v3/users/{slug}/channels returns all channels including private ones for the authed user
   const allChannels: ArenaChannel[] = [];
   let page = 1;
 
   while (true) {
-    const res = await get<PagedResponse<ArenaBlock | ArenaChannel>>(
-      `/users/${userSlug}/contents?per=100&page=${page}`
+    const res = await get<PagedResponse<ArenaChannel>>(
+      `/users/${userSlug}/channels?per=100&page=${page}`
     );
     const items = res.data ?? [];
-    const channels = items.filter((item): item is ArenaChannel => item.type === 'Channel');
-    allChannels.push(...channels);
+    allChannels.push(...items);
     if (!res.meta?.has_more_pages) break;
     page++;
   }
