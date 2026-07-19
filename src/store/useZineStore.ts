@@ -26,7 +26,7 @@ interface ZineStore {
   removeBlock: (instanceId: string) => void;
   updateBlockPosition: (instanceId: string, x: number, y: number) => void;
   updateBlockSize: (instanceId: string, width: number, height: number) => void;
-  updateBlockStyle: (instanceId: string, style: Partial<Pick<ZineBlock, 'fontSize' | 'fontFamily' | 'backgroundColor' | 'color' | 'opacity' | 'borderRadius' | 'cropShape' | 'imageOffsetX' | 'imageOffsetY'>>) => void;
+  updateBlockStyle: (instanceId: string, style: Partial<Pick<ZineBlock, 'fontSize' | 'fontFamily' | 'backgroundColor' | 'color' | 'opacity' | 'borderRadius' | 'cropShape' | 'imageOffsetX' | 'imageOffsetY' | 'riso'>>) => void;
 
   // Z-order
   bringToFront: (instanceId: string) => void;
