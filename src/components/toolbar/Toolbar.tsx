@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useZineStore } from '../../store/useZineStore';
 import PageSizeSelector from './PageSizeSelector';
-import { exportPDF } from '../../lib/exportPDF';
 
 export default function Toolbar() {
   const { document: doc, setDocumentTitle } = useZineStore();
@@ -10,6 +9,8 @@ export default function Toolbar() {
   async function handleExport() {
     setExporting(true);
     try {
+      // Lazy-load so @react-pdf/renderer stays out of the main bundle
+      const { exportPDF } = await import('../../lib/exportPDF');
       await exportPDF(doc);
     } catch (e) {
       console.error('PDF export failed:', e);
