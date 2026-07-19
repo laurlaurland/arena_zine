@@ -6,43 +6,63 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 npm run dev       # Start dev server at http://localhost:5173
-npm run build     # TypeScript check + production build
+npm run build     # TypeScript check + production build (tsc -b && vite build)
+npm run lint      # ESLint
 npm run preview   # Preview production build locally
 ```
 
+There is no test suite; `npm run build` is the correctness check.
+
 ## Architecture
 
-**Stack:** Vite + React 18 + TypeScript, Zustand state, @dnd-kit drag-and-drop, @react-pdf/renderer for PDF export, Tailwind CSS (v4 via @tailwindcss/vite plugin), arena-ts Are.na API client.
+**Stack:** Vite 8 + React 19 + TypeScript, Zustand 5 state, @dnd-kit/core drag-and-drop, @react-pdf/renderer for PDF export, Tailwind CSS v4 (via @tailwindcss/vite plugin). The Are.na API is called through a hand-rolled fetch client (`src/api/arena.ts`) — **not** a client library.
 
 ### Data flow
 
-1. `TokenGate` → user pastes Are.na personal access token → validated against `/v3/me` → stored in `localStorage`
-2. `useArenaStore` fetches the user's channels via `user(slug).channels()` and blocks via `channel(slug).contents()` (paginated, 100/page)
-3. User drags `BlockThumbnail` from sidebar onto a `ZinePage` drop target → `useZineStore.addBlock()` converts the `ArenaBlock` to a `ZineBlock` with percentage-based coordinates (0–100% of page dimensions)
-4. Placed blocks are repositioned by dragging (dnd-kit delta → percentage conversion) and resized via pointer-event corner handles
-5. Export: `exportPDF()` in `src/lib/exportPDF.ts` passes the `ZineDocument` to `@react-pdf/renderer` components in `src/components/pdf/` which map percentage coordinates to PDF points
+1. `TokenGate` → user pastes Are.na personal access token → validated via `GET /v3/me` → stored in `localStorage` (`arena_token`, `arena_user_slug`)
+2. `useArenaStore` fetches channels (`/v3/users/{slug}/channels`) and the selected channel's blocks (`/v3/channels/{slug}/contents`), both paginated 100/page
+3. User drags a `BlockThumbnail` from the sidebar onto a `ZinePage` drop target → `useZineStore.addBlock()` converts the `ArenaBlock` into a `ZineBlock` **content snapshot** with percentage-based coordinates — placed blocks never re-fetch from Are.na
+4. Placed blocks are repositioned via dnd-kit drag, and resized/rotated via raw pointer-event handles on `PlacedBlock`
+5. Export: `exportPDF()` in `src/lib/exportPDF.ts` renders the `ZineDocument` through the `@react-pdf/renderer` tree in `src/components/pdf/` and triggers a download
 
 ### State
 
-- **`useArenaStore`** (`src/store/useArenaStore.ts`): token, user slug, channels list, selected channel slug, fetched blocks. Token persisted in `localStorage`; block content is not (re-fetched each session).
-- **`useZineStore`** (`src/store/useZineStore.ts`): the `ZineDocument` (pages, blocks, page size, title). Persisted to `localStorage` via Zustand `persist` middleware under key `arena-zine-document`.
+- **`useArenaStore`** (`src/store/useArenaStore.ts`): token, user slug, channels list, selected channel slug, fetched blocks. Token/slug persisted manually to `localStorage`; channel/block content is re-fetched each session.
+- **`useZineStore`** (`src/store/useZineStore.ts`): the `ZineDocument` (pages, blocks, page size, title), undo history, selection, zoom. Persisted via Zustand `persist` under key `arena-zine-document`, with `partialize` so **only `document`** is persisted (history/selection/zoom are not).
+
+**Undo model:** `history` holds the last 10 `ZineDocument` snapshots. One-shot mutations (add/remove/reorder, drag-end position, z-order, title, page size) push a snapshot inline in the same `set()`. Continuous gestures (resize, rotate, inspector sliders) call `captureHistory()` once on pointerdown, then mutate on every pointermove without pushing. Cmd/Ctrl+Z undoes; Delete/Backspace removes the selected block (keyboard handling in `App.tsx`).
 
 ### Key coordinate model
 
-All block positions and sizes are stored as **percentages of page dimensions** (0–100). This makes layout resolution-independent and maps directly to both the scaled canvas (multiply by canvas pixel width) and the PDF renderer (multiply by `pageSize.widthPt` / `heightPt`). The page sizes in points are defined in `src/lib/pageSizes.ts`.
+All block positions and sizes are stored as **percentages of page dimensions** (0–100). This is resolution-independent and maps directly to the canvas (CSS `%`) and the PDF (`block.x / 100 * pageSize.widthPt`). Page sizes (A4, LETTER, A5, HALF_LETTER — mm and pt) are defined in `src/lib/pageSizes.ts`.
+
+Because width% and height% are relative to *different* page dimensions, preserving an image's pixel aspect ratio requires the page aspect ratio: `height% = width% / (imageRatio * pageAR)` where `pageAR = heightMm / widthMm`. See `arenaBlockToZineBlock()` and `updateAspectRatio()` in `useZineStore.ts`.
+
+### Block conversion
+
+`arenaBlockToZineBlock()` (in `useZineStore.ts`) snapshots Are.na content into the `ZineBlock`: `imageUrl` (display size) + `imageUrlLarge` (for PDF) via `pickImageUrl()`, text content, link/media/attachment fields. v3 block `type` may arrive in either casing (`'Image'`/`'image'`) — always normalize to lowercase. v3 text `content` is an object `{markdown, html, plain}`; a plain string means v2-shaped data.
 
 ### Drag-and-drop
 
-`Canvas.tsx` is the single `DndContext` root. Two drag modes handled in `onDragEnd`:
-- `source: 'sidebar'` → dropped onto a `useDroppable` page → compute drop center relative to page rect, convert to %, call `addBlock()`
-- `source: 'canvas'` → `PlacedBlock` repositioned → apply `delta.x / zoom / pageRect.width * 100` offset to existing coordinates
+The single `DndContext` root is the `Editor` component in **`App.tsx`** (with a `DragOverlay` preview for sidebar drags). Two modes in `handleDragEnd`, keyed by `active.data.current.source`:
 
-Resize handles on `PlacedBlock` use raw pointer events (`onPointerDown`/`onPointerMove`/`onPointerUp`) — not dnd-kit. Deltas are divided by `zoom` before converting to percentages.
+- `'sidebar'` → dropped onto a `useDroppable` page (`over.data.current.pageId`): find the page DOM node by id `page-${pageId}`, compute the drop center relative to its rect, convert to %, subtract half the default block size (20, 15), call `addBlock()`
+- `'canvas'` → a `PlacedBlock` was repositioned: `delta.x / pageRect.width * 100` added to the block's stored coordinates
+
+Note on zoom: the canvas wrapper is CSS-`scale(zoom)`d, so `getBoundingClientRect()` on a page already returns zoom-scaled dimensions — drop/resize math needs **no** explicit zoom division. The only place zoom is divided out is `PlacedBlock`'s live drag transform (`transform.x / zoom`), because dnd-kit's transform is applied inside the scaled subtree.
+
+Resize (8 handles: corners + edges) and rotation (handle above the block; Shift snaps to 15°) use raw pointer events with `setPointerCapture` — not dnd-kit. Corner resizes lock to the image's `naturalAspectRatio` when known.
 
 ### PDF rendering
 
-`src/components/pdf/` contains a parallel React tree using `@react-pdf/renderer` primitives (`View`, `Text`, `Image`, `Page`, `Document`). `PDFBlock` converts percentage coordinates to absolute points: `left = block.x / 100 * pageSize.widthPt`. The `pdf()` call is in `src/lib/exportPDF.ts`.
+`src/components/pdf/` is a parallel React tree using `@react-pdf/renderer` primitives (`Document`, `Page`, `View`, `Text`, `Image`). `PDFBlock` converts percentages to absolute points and prefers `imageUrlLarge`. Only a subset of block styles is applied in the PDF (position/size, z-order, opacity, backgroundColor, fontSize, color); **rotation, borderRadius, circle crop, and image pan are currently canvas-only** and silently dropped on export. The `pdf()` call is in `src/lib/exportPDF.ts`.
 
 ### Are.na API
 
-`src/api/arena.ts` wraps `arena-ts`. The `ArenaClient` is instantiated with `{ token }`. Key methods used: `client.me()`, `client.user(slug).channels({ per, page })`, `client.channel(slug).contents({ per, page })`. The contents response includes both blocks and sub-channels; filter by `base_class === 'Block'`.
+`src/api/arena.ts` is a direct fetch client for the **v3** API (`https://api.are.na/v3`, `Authorization: Bearer <token>`). The token lives in a module-level variable set by `initClient()`, falling back to `localStorage.arena_token`. Endpoints used:
+
+- `GET /me` — token validation
+- `GET /users/{slug}/channels?per=100&page=N` — includes the authed user's private channels
+- `GET /channels/{slug}/contents?per=100&page=N` — returns blocks *and* sub-channels; filter with `type !== 'Channel'`
+
+Pagination loops on `meta.has_more_pages`. All v3 response types (`ArenaBlock`, `ArenaChannel`, `ArenaImageData`, …) are defined in this file; `pickImageUrl()` selects the best sized image variant with fallback to the original `src`.
