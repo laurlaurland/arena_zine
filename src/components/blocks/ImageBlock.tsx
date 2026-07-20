@@ -1,4 +1,5 @@
 import type { ZineBlock } from '../../types/zine';
+import { useRisoImage } from '../../hooks/useRisoImage';
 
 interface Props {
   block: ZineBlock;
@@ -6,6 +7,8 @@ interface Props {
 }
 
 export default function ImageBlock({ block, onNaturalSize }: Props) {
+  const risoUrl = useRisoImage(block);
+
   if (!block.imageUrl) {
     return (
       <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#e7e5e4', color: '#a8a29e', fontSize: 12 }}>
@@ -16,7 +19,7 @@ export default function ImageBlock({ block, onNaturalSize }: Props) {
 
   return (
     <img
-      src={block.imageUrl}
+      src={risoUrl ?? block.imageUrl}
       alt={block.title ?? ''}
       referrerPolicy="no-referrer"
       draggable={false}
@@ -38,7 +41,7 @@ export default function ImageBlock({ block, onNaturalSize }: Props) {
       }}
       onError={(e) => {
         const img = e.currentTarget;
-        if (block.imageUrlLarge && img.src !== block.imageUrlLarge) {
+        if (!risoUrl && block.imageUrlLarge && img.src !== block.imageUrlLarge) {
           img.src = block.imageUrlLarge;
         }
       }}
