@@ -18,6 +18,7 @@ export function useRisoImage(block: ZineBlock): string | undefined {
       setProcessed(undefined);
       return;
     }
+    setProcessed(undefined);
     let cancelled = false;
     const t = setTimeout(() => {
       processRisoImage(url!, { ink: ink!, intensity: intensity!, mode: 'ink' })
