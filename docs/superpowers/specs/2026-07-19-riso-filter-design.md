@@ -85,8 +85,9 @@ p5-free port of the p5.riso pipeline:
   4. Threshold the result by intensity (p5.riso's `ditherImage(…, 'none',
      threshold)` finishing pass).
   5. Colorize: dot pixels → ink RGB (`mode: 'ink'`) or black (`mode:
-     'coverage'` for separations); non-dot pixels → transparent
-     (`mode: 'ink'`) or white (`mode: 'coverage'`, for print masters).
+     'coverage'` for separations); non-dot pixels → transparent in both
+     modes (coverage layers rely on the white page; transparency lets
+     same-ink overlaps union like real riso passes).
 - In-memory cache keyed by `url|ink|intensity|mode`. No LRU needed at this
   scale; cleared on page reload.
 - On image load/CORS failure: reject; callers fall back to the original image

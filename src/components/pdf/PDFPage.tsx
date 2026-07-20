@@ -1,6 +1,5 @@
 import { Page, View } from '@react-pdf/renderer';
-import type { ZineBlock, ZinePage } from '../../types/zine';
-import type { PageSize } from '../../types/zine';
+import type { ZineBlock, ZinePage, PageSize } from '../../types/zine';
 import { hexToGray } from '../../lib/riso';
 import type { Separation } from './ZinePDF';
 import PDFBlock from './PDFBlock';

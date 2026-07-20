@@ -154,11 +154,13 @@ async function renderRiso(url: string, { ink, intensity, mode }: RisoParams): Pr
       d[i + 1] = g;
       d[i + 2] = b;
       d[i + 3] = 255;
-    } else if (mode === 'ink') {
-      d[i + 3] = 0; // paper shows through
     } else {
-      d[i] = d[i + 1] = d[i + 2] = 255;
-      d[i + 3] = 255; // opaque white on the print master
+      // Non-dot pixels are transparent in both modes: separation pages are
+      // already forced to a white background (PDFPage.tsx), so nothing
+      // needs an opaque white fill here, and transparency lets overlapping
+      // same-ink blocks union their dots like real riso passes instead of
+      // one block's "white" erasing another's ink.
+      d[i + 3] = 0;
     }
   }
   ctx.putImageData(data, 0, 0);

@@ -215,7 +215,7 @@ git commit -m "feat: riso ink palette data and riso field on ZineBlock" -m "Co-A
 - Consumes: `getRisoInk` from `src/lib/risoColors.ts` (Task 1).
 - Produces:
   - `RisoParams = { ink: string; intensity: number; mode: 'ink' | 'coverage' }`
-  - `processRisoImage(url: string, params: RisoParams): Promise<string>` → PNG data URL. `'ink'` mode: dots in ink RGB, non-dots transparent. `'coverage'` mode: black dots on opaque white (print master).
+  - `processRisoImage(url: string, params: RisoParams): Promise<string>` → PNG data URL. `'ink'` mode: dots in ink RGB. `'coverage'` mode: black dots (print master). Non-dot pixels → transparent in both modes (coverage layers rely on the white page; transparency lets same-ink overlaps union like real riso passes).
   - `grayscaleImage(url: string): Promise<string>` → PNG data URL, luminance grayscale (for the KEY layer).
   - `hexToGray(hex: string): string` → `#rrggbb` luminance gray (non-`#rrggbb` input returned unchanged).
   - All results cached in-memory by `url|ink|intensity|mode` (or `url|gray`); failed promises are evicted so retries are possible.
@@ -381,11 +381,13 @@ async function renderRiso(url: string, { ink, intensity, mode }: RisoParams): Pr
       d[i + 1] = g;
       d[i + 2] = b;
       d[i + 3] = 255;
-    } else if (mode === 'ink') {
-      d[i + 3] = 0; // paper shows through
     } else {
-      d[i] = d[i + 1] = d[i + 2] = 255;
-      d[i + 3] = 255; // opaque white on the print master
+      // Non-dot pixels are transparent in both modes: separation pages are
+      // already forced to a white background (PDFPage.tsx), so nothing
+      // needs an opaque white fill here, and transparency lets overlapping
+      // same-ink blocks union their dots like real riso passes instead of
+      // one block's "white" erasing another's ink.
+      d[i + 3] = 0;
     }
   }
   ctx.putImageData(data, 0, 0);
