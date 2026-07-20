@@ -55,7 +55,11 @@ Resize (8 handles: corners + edges) and rotation (handle above the block; Shift 
 
 ### PDF rendering
 
-`src/components/pdf/` is a parallel React tree using `@react-pdf/renderer` primitives (`Document`, `Page`, `View`, `Text`, `Image`). `PDFBlock` converts percentages to absolute points and prefers `imageUrlLarge`. Only a subset of block styles is applied in the PDF (position/size, z-order, opacity, backgroundColor, fontSize, color); **rotation, borderRadius, circle crop, and image pan are currently canvas-only** and silently dropped on export. The `pdf()` call is in `src/lib/exportPDF.ts`.
+`src/components/pdf/` is a parallel React tree using `@react-pdf/renderer` primitives (`Document`, `Page`, `View`, `Text`, `Image`). `PDFBlock` converts percentages to absolute points and prefers `imageUrlLarge`. Only a subset of block styles is applied in the PDF (position/size, z-order, opacity, backgroundColor, fontSize, color, riso halftone); **rotation, borderRadius, circle crop, and image pan are currently canvas-only** and silently dropped on export. The `pdf()` call is in `src/lib/exportPDF.ts`.
+
+### Riso effect
+
+`src/lib/riso.ts` is a p5-free canvas port of p5.riso's circle-halftone pipeline. Image blocks may carry `riso: { ink, intensity }` (ink names from `src/lib/risoColors.ts`, the authentic 80-color RISO palette); only these params persist — processed images are in-memory data URLs cached by `url|ink|intensity|mode`. Canvas display goes through `useRisoImage` (150 ms debounce, 'ink' mode: ink-colored dots, transparent paper). Export offers **Composite PDF** (riso baked in from `imageUrlLarge`) and **Riso separations** (`exportRisoSeparations()`): one black-coverage PDF per distinct ink plus a `_KEY.pdf` of untreated content (images grayscaled), for actual riso print masters. `ZinePDF`/`PDFPage`/`PDFBlock` accept `risoImages` (instanceId → data URL) and a `separation` render mode.
 
 ### Are.na API
 
