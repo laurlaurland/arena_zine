@@ -1,4 +1,5 @@
 import { useZineStore } from '../../store/useZineStore';
+import { CURATED_RISO_INKS, risoInkCss } from '../../lib/risoColors';
 
 export default function BlockInspector() {
   const {
@@ -167,6 +168,69 @@ export default function BlockInspector() {
                 </button>
               </div>
             </Section>
+
+            {/* Riso halftone effect */}
+            {block.type === 'image' && block.imageUrl && (
+              <Section label="Riso">
+                <div className="flex flex-col gap-2">
+                  <button
+                    onClick={() => {
+                      captureHistory();
+                      updateBlockStyle(selectedInstanceId, {
+                        riso: block.riso ? undefined : { ink: 'FLUORESCENTPINK', intensity: 50 },
+                      });
+                    }}
+                    className={`text-xs rounded px-2 py-1.5 transition-colors ${
+                      block.riso
+                        ? 'bg-stone-800 text-white hover:bg-stone-700'
+                        : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
+                    }`}
+                  >
+                    {block.riso ? 'Riso on' : 'Riso off'}
+                  </button>
+
+                  {block.riso && (
+                    <>
+                      <div className="grid grid-cols-8 gap-1">
+                        {CURATED_RISO_INKS.map((name) => (
+                          <button
+                            key={name}
+                            title={name}
+                            onClick={() => {
+                              captureHistory();
+                              updateBlockStyle(selectedInstanceId, { riso: { ...block.riso!, ink: name } });
+                            }}
+                            className={`w-4 h-4 rounded-sm border ${
+                              block.riso!.ink === name
+                                ? 'border-stone-900 ring-1 ring-stone-900'
+                                : 'border-stone-200'
+                            }`}
+                            style={{ backgroundColor: risoInkCss(name) }}
+                          />
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          step={1}
+                          value={block.riso!.intensity}
+                          onPointerDown={captureHistory}
+                          onChange={(e) =>
+                            updateBlockStyle(selectedInstanceId, {
+                              riso: { ...block.riso!, intensity: parseFloat(e.target.value) },
+                            })
+                          }
+                          className="flex-1 h-1 accent-stone-800"
+                        />
+                        <span className="text-xs text-stone-500 w-8 text-right">{block.riso!.intensity}</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </Section>
+            )}
           </>
         )}
       </div>

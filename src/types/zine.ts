@@ -11,6 +11,11 @@ export interface PageSize {
 
 export type ZineBlockType = 'text' | 'image' | 'link' | 'media' | 'attachment';
 
+export interface RisoEffect {
+  ink: string;       // name from RISO_COLORS, e.g. "FLUORESCENTPINK"
+  intensity: number; // 0–100 halftone threshold: low = airy dots, high = heavy coverage
+}
+
 export interface ZineBlock {
   instanceId: string;
   arenaBlockId: number;
@@ -45,6 +50,7 @@ export interface ZineBlock {
   cropShape?: 'circle';    // clips to circle when set
   imageOffsetX?: number;   // object-position X, 0–100 (default 50)
   imageOffsetY?: number;   // object-position Y, 0–100 (default 50)
+  riso?: RisoEffect;       // riso halftone effect (image blocks only)
 }
 
 export interface ZinePage {
