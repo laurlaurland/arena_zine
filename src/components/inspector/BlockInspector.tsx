@@ -174,6 +174,8 @@ export default function BlockInspector() {
               <Section label="Riso">
                 <div className="flex flex-col gap-2">
                   <button
+                    type="button"
+                    aria-pressed={!!block.riso}
                     onClick={() => {
                       captureHistory();
                       updateBlockStyle(selectedInstanceId, {
@@ -195,7 +197,10 @@ export default function BlockInspector() {
                         {CURATED_RISO_INKS.map((name) => (
                           <button
                             key={name}
+                            type="button"
                             title={name}
+                            aria-label={name}
+                            aria-pressed={block.riso!.ink === name}
                             onClick={() => {
                               captureHistory();
                               updateBlockStyle(selectedInstanceId, { riso: { ...block.riso!, ink: name } });

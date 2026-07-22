@@ -1,4 +1,5 @@
-// Authentic RISO ink colors, from p5.riso (https://github.com/laurlaurland/p5.riso)
+// Authentic RISO ink colors, from p5.riso: https://github.com/antiboredom/p5.riso
+// (ported here via https://github.com/laurlaurland/p5.riso)
 export interface RisoInk {
   name: string;
   color: [number, number, number];

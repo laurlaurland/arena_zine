@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useZineStore } from '../../store/useZineStore';
 import PageSizeSelector from './PageSizeSelector';
 
@@ -7,6 +7,15 @@ export default function Toolbar() {
   const [exporting, setExporting] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const hasRiso = doc.pages.some((p) => p.blocks.some((b) => b.riso));
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') setMenuOpen(false);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [menuOpen]);
 
   async function runExport(kind: 'composite' | 'separations') {
     setMenuOpen(false);
@@ -44,6 +53,8 @@ export default function Toolbar() {
           <button
             onClick={() => setMenuOpen((o) => !o)}
             disabled={exporting}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
             className="bg-stone-900 text-white rounded-lg px-4 py-1.5 text-sm font-medium hover:bg-stone-700 disabled:opacity-40 transition-colors"
           >
             {exporting ? 'Exporting…' : 'Export ▾'}
@@ -51,7 +62,10 @@ export default function Toolbar() {
           {menuOpen && (
             <>
               <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
-              <div className="absolute right-0 top-full mt-1 z-20 w-48 bg-white border border-stone-200 rounded-lg shadow-lg py-1">
+              <div
+                role="menu"
+                className="absolute right-0 top-full mt-1 z-20 w-48 bg-white border border-stone-200 rounded-lg shadow-lg py-1"
+              >
                 <MenuItem onClick={() => runExport('composite')}>Composite PDF</MenuItem>
                 <MenuItem
                   onClick={() => runExport('separations')}
@@ -86,6 +100,8 @@ function MenuItem({
 }) {
   return (
     <button
+      type="button"
+      role="menuitem"
       onClick={onClick}
       disabled={disabled}
       title={title}
