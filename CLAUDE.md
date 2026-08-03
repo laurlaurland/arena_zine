@@ -20,7 +20,7 @@ There is no test suite; `npm run build` is the correctness check.
 ### Data flow
 
 1. `TokenGate` → user pastes Are.na personal access token → validated via `GET /v3/me` → stored in `localStorage` (`arena_token`, `arena_user_slug`)
-2. `useArenaStore` fetches channels (`/v3/users/{slug}/channels`) and the selected channel's blocks (`/v3/channels/{slug}/contents`), both paginated 100/page
+2. `useArenaStore` fetches channels (`/v3/users/{slug}/contents?type=Channel`) and the selected channel's blocks (`/v3/channels/{slug}/contents`), both paginated 100/page
 3. User drags a `BlockThumbnail` from the sidebar onto a `ZinePage` drop target → `useZineStore.addBlock()` converts the `ArenaBlock` into a `ZineBlock` **content snapshot** with percentage-based coordinates — placed blocks never re-fetch from Are.na
 4. Placed blocks are repositioned via dnd-kit drag, and resized/rotated via raw pointer-event handles on `PlacedBlock`
 5. Export: `exportPDF()` in `src/lib/exportPDF.ts` renders the `ZineDocument` through the `@react-pdf/renderer` tree in `src/components/pdf/` and triggers a download
@@ -66,7 +66,7 @@ Resize (8 handles: corners + edges) and rotation (handle above the block; Shift 
 `src/api/arena.ts` is a direct fetch client for the **v3** API (`https://api.are.na/v3`, `Authorization: Bearer <token>`). The token lives in a module-level variable set by `initClient()`, falling back to `localStorage.arena_token`. Endpoints used:
 
 - `GET /me` — token validation
-- `GET /users/{slug}/channels?per=100&page=N` — includes the authed user's private channels
+- `GET /users/{slug}/contents?type=Channel&per=100&page=N` — the user's channels, including private ones. **v3 has no `/users/{slug}/channels` route**; channels come from the mixed contents feed narrowed by `type` (`ContentTypeFilter` enum: `Text|Image|Link|Attachment|Embed|Channel|Block`). The feed also includes channels shared via the user's groups, so `fetchUserChannels()` drops those where `owner.type === 'Group'`
 - `GET /channels/{slug}/contents?per=100&page=N` — returns blocks *and* sub-channels; filter with `type !== 'Channel'`
 
 Pagination loops on `meta.has_more_pages`. All v3 response types (`ArenaBlock`, `ArenaChannel`, `ArenaImageData`, …) are defined in this file; `pickImageUrl()` selects the best sized image variant with fallback to the original `src`.

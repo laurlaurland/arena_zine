@@ -21,3 +21,6 @@ npm-debug.log*
 
 # TypeScript cache
 *.tsbuildinfo
+
+# Superpowers scratch (SDD progress ledgers, brainstorming mockups)
+.superpowers/
