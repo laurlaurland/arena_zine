@@ -1,4 +1,5 @@
 import { useZineStore } from '../../store/useZineStore';
+import { PAGE_SIZES } from '../../lib/pageSizes';
 import { CURATED_RISO_INKS, risoInkCss } from '../../lib/risoColors';
 
 export default function BlockInspector() {
@@ -6,6 +7,7 @@ export default function BlockInspector() {
     selectedInstanceId,
     document: doc,
     updateBlockStyle,
+    updateBlockSize,
     updateBlockRotation,
     captureHistory,
     bringToFront,
@@ -166,6 +168,21 @@ export default function BlockInspector() {
                 >
                   Reset center
                 </button>
+                {block.naturalAspectRatio ? (
+                  <button
+                    className="text-xs text-stone-400 hover:text-stone-600 text-left"
+                    title="Restore the image's true proportions (removes cropping)"
+                    onClick={() => {
+                      captureHistory();
+                      const ps = PAGE_SIZES[doc.pageSize];
+                      const pageAR = ps.heightMm / ps.widthMm;
+                      const h = block.width / (block.naturalAspectRatio! * pageAR);
+                      updateBlockSize(selectedInstanceId, block.width, Math.max(5, Math.min(100, h)));
+                    }}
+                  >
+                    Fit to image
+                  </button>
+                ) : null}
               </div>
             </Section>
 
