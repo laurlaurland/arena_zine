@@ -29,8 +29,9 @@ function DragPreview({ arenaBlock }: { arenaBlock: ArenaBlock }) {
 }
 
 function Editor() {
-  const { document: doc, addBlock, updateBlockPosition, selectedInstanceId, removeBlock, selectBlock, undo } = useZineStore();
+  const { document: doc, addBlock, updateBlockPosition, reorderPages, selectedInstanceId, removeBlock, selectBlock, undo } = useZineStore();
   const [draggingArenaBlock, setDraggingArenaBlock] = useState<ArenaBlock | null>(null);
+  const [draggingPageNumber, setDraggingPageNumber] = useState<number | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
@@ -60,15 +61,29 @@ function Editor() {
   function handleDragStart(event: DragStartEvent) {
     const data = event.active.data.current;
     if (data?.source === 'sidebar') setDraggingArenaBlock(data.arenaBlock);
+    if (data?.source === 'page') {
+      const i = doc.pages.findIndex((p) => p.id === data.pageId);
+      setDraggingPageNumber(i === -1 ? null : i + 1);
+    }
   }
 
   function handleDragEnd(event: DragEndEvent) {
     setDraggingArenaBlock(null);
+    setDraggingPageNumber(null);
     const { active, over, delta } = event;
     if (!over) return;
 
     const activeData = active.data.current;
     const overData = over.data.current;
+
+    // Page reordered by dragging its caption onto another page
+    if (activeData?.source === 'page' && overData?.pageId) {
+      // Indices come from doc.pages, the array reorderPages splices.
+      const from = doc.pages.findIndex((p) => p.id === activeData.pageId);
+      const to = doc.pages.findIndex((p) => p.id === overData.pageId);
+      if (from !== -1 && to !== -1 && from !== to) reorderPages(from, to);
+      return;
+    }
 
     // Sidebar block dropped onto a page
     if (activeData?.source === 'sidebar' && overData?.pageId) {
@@ -112,6 +127,11 @@ function Editor() {
       </div>
       <DragOverlay dropAnimation={null}>
         {draggingArenaBlock && <DragPreview arenaBlock={draggingArenaBlock} />}
+        {draggingPageNumber !== null && (
+          <div className="bg-stone-800 text-white text-xs rounded px-2 py-1 shadow-lg pointer-events-none">
+            Page {draggingPageNumber}
+          </div>
+        )}
       </DragOverlay>
     </DndContext>
   );

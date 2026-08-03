@@ -11,6 +11,7 @@ interface ZineStore {
   history: ZineDocument[];    // undo stack (not persisted)
   selectedInstanceId: string | null;
   zoom: number;
+  viewMode: 'single' | 'spread';   // canvas layout (not persisted)
 
   // Document
   setDocumentTitle: (title: string) => void;
@@ -49,6 +50,7 @@ interface ZineStore {
 
   // Zoom
   setZoom: (zoom: number) => void;
+  setViewMode: (mode: 'single' | 'spread') => void;
 }
 
 function arenaBlockToZineBlock(arenaBlock: ArenaBlock, x: number, y: number, pageAR = 1): ZineBlock {
@@ -159,6 +161,7 @@ export const useZineStore = create<ZineStore>()(
       history: [],
       selectedInstanceId: null,
       zoom: 0.8,
+      viewMode: 'single',
 
       // ── History helpers ────────────────────────────────────────────────────
       captureHistory: () =>
@@ -381,6 +384,8 @@ export const useZineStore = create<ZineStore>()(
       selectBlock: (instanceId) => set({ selectedInstanceId: instanceId }),
 
       setZoom: (zoom) => set({ zoom: clamp(zoom, 0.25, 2) }),
+
+      setViewMode: (mode) => set({ viewMode: mode }),
     }),
     {
       name: 'arena-zine-document',
