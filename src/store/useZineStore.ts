@@ -248,10 +248,34 @@ export const useZineStore = create<ZineStore>()(
       removePage: (pageId) =>
         set((s) => {
           if (s.document.pages.length <= 1) return s;
-          const pages = applyParity(
-            s.document.pages.filter((p) => p.id !== pageId),
-            makeAutoPad
+
+          // The page being deleted may hold half of a span. Leaving the other
+          // half with a spanId whose partner no longer exists is the orphan
+          // state paired deletion exists to prevent — but destroying content on
+          // a page the user did not delete would be worse, so the survivor is
+          // unlinked into an ordinary block rather than removed.
+          const orphanedSpanIds = new Set(
+            (s.document.pages.find((p) => p.id === pageId)?.blocks ?? [])
+              .map((b) => b.spanId)
+              .filter((id): id is string => !!id)
           );
+
+          const kept = s.document.pages
+            .filter((p) => p.id !== pageId)
+            .map((p) =>
+              orphanedSpanIds.size === 0
+                ? p
+                : {
+                    ...p,
+                    blocks: p.blocks.map((b) =>
+                      b.spanId && orphanedSpanIds.has(b.spanId)
+                        ? { ...b, spanId: undefined, spanSide: undefined }
+                        : b
+                    ),
+                  }
+            );
+
+          const pages = applyParity(kept, makeAutoPad);
           return {
             history: [...s.history.slice(-9), s.document],
             document: touchDoc({ ...s.document, pages }),
