@@ -6,6 +6,7 @@ import { pickImageUrl } from '../api/arena';
 import { generateId, clamp, now } from '../lib/utils';
 import { PAGE_SIZES } from '../lib/pageSizes';
 import { resolveSpanDrop, toXLeft, STRADDLE_MIN } from '../lib/spanGeometry';
+import { reorderWithUnits, applyParity } from '../lib/pageUnits';
 
 interface ZineStore {
   document: ZineDocument;
@@ -157,6 +158,10 @@ function touchDoc(doc: ZineDocument): ZineDocument {
   return { ...doc, updatedAt: now() };
 }
 
+function makeAutoPad(): ZinePage {
+  return { id: generateId(), order: 0, blocks: [], autoPad: true };
+}
+
 interface Located {
   block: ZineBlock;
   pageIndex: number;
@@ -243,9 +248,10 @@ export const useZineStore = create<ZineStore>()(
       removePage: (pageId) =>
         set((s) => {
           if (s.document.pages.length <= 1) return s;
-          const pages = s.document.pages
-            .filter((p) => p.id !== pageId)
-            .map((p, i) => ({ ...p, order: i }));
+          const pages = applyParity(
+            s.document.pages.filter((p) => p.id !== pageId),
+            makeAutoPad
+          );
           return {
             history: [...s.history.slice(-9), s.document],
             document: touchDoc({ ...s.document, pages }),
@@ -254,12 +260,11 @@ export const useZineStore = create<ZineStore>()(
 
       reorderPages: (fromIndex, toIndex) =>
         set((s) => {
-          const pages = [...s.document.pages];
-          const [moved] = pages.splice(fromIndex, 1);
-          pages.splice(toIndex, 0, moved);
+          const moved = reorderWithUnits(s.document.pages, fromIndex, toIndex);
+          if (moved === s.document.pages) return s;
           return {
             history: [...s.history.slice(-9), s.document],
-            document: touchDoc({ ...s.document, pages: pages.map((p, i) => ({ ...p, order: i })) }),
+            document: touchDoc({ ...s.document, pages: applyParity(moved, makeAutoPad) }),
           };
         }),
 
