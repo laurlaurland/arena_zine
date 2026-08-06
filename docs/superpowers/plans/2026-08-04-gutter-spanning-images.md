@@ -380,6 +380,13 @@ padCount = 0;
 eq('parity: pair at 2-3 gets a pad before it',
   ids(applyParity(pages('a b c* d*'), makeBlank)), ['p0', 'p1', 'pad0', 'p2', 'p3']);
 
+// Two pairs that each need padding — exercises the multi-insertion path, the
+// one the loop bound actually guards.
+padCount = 0;
+eq('parity: cascading inserts for two misaligned pairs',
+  ids(applyParity(pages('a b c* d* e f* g*'), makeBlank)),
+  ['p0', 'p1', 'pad0', 'p2', 'p3', 'p4', 'pad1', 'p5', 'p6']);
+
 // applyParity strips empty auto-pads that are no longer needed
 padCount = 0;
 const stale: ZinePage[] = [
@@ -487,8 +494,11 @@ export function applyParity(
   let result = pages.filter((p) => !(p.autoPad && p.blocks.length === 0));
 
   // Each insert fixes the earliest misaligned pair, so this terminates in at
-  // most one pass per pair.
-  for (let guard = 0; guard <= result.length + 2; guard++) {
+  // most one pass per pair. The bound is frozen before the loop: comparing
+  // against a growing `result.length` would keep pace with `guard` and never
+  // fire, making the guard useless exactly when it is needed.
+  const maxPasses = pages.length + 2;
+  for (let guard = 0; guard <= maxPasses; guard++) {
     const units = buildUnits(result);
     let index = 0;
     let inserted = false;
