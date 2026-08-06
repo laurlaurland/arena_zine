@@ -313,6 +313,10 @@ export const useZineStore = create<ZineStore>()(
 
           const clampedY = clamp(y, 0, 100 - block.height);
           let pages = s.document.pages;
+          // Selection is set only by clicking a block, and dnd-kit's 8px
+          // activation constraint swallows the click once a drag starts — so
+          // the selected block and the dragged block can be different halves.
+          let nextSelectedId = s.selectedInstanceId;
 
           if (decision.action === 'create') {
             const spanId = generateId();
@@ -366,6 +370,9 @@ export const useZineStore = create<ZineStore>()(
             const doomedId =
               block.spanSide === decision.keep ? partner?.instanceId : instanceId;
             const height = clamp(block.height * decision.scale, 5, 100);
+            // Never leave selection pointing at the half we just removed —
+            // whether or not that half is the one being dragged.
+            if (s.selectedInstanceId === doomedId) nextSelectedId = survivorId ?? null;
             pages = s.document.pages.map((p) => ({
               ...p,
               blocks: p.blocks
@@ -398,10 +405,7 @@ export const useZineStore = create<ZineStore>()(
           return {
             history: [...s.history.slice(-9), s.document],
             document: { ...s.document, pages },
-            selectedInstanceId:
-              decision.action === 'dissolve' && block.spanSide !== decision.keep
-                ? findPartner(s.document.pages, block)?.instanceId ?? null
-                : s.selectedInstanceId,
+            selectedInstanceId: nextSelectedId,
           };
         }),
 
