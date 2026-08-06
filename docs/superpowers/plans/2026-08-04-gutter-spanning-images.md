@@ -1144,7 +1144,7 @@ and next to `setViewMode`:
 In `src/App.tsx`, extend the dnd-kit import to include `type DragMoveEvent`, and pull the new pieces out of the store:
 
 ```ts
-  const { document: doc, addBlock, updateBlockPosition, reorderPages, selectedInstanceId, removeBlock, selectBlock, undo, viewMode, setSpanPreview } = useZineStore();
+  const { document: doc, addBlock, updateBlockPosition, reorderPages, selectedInstanceId, removeBlock, selectBlock, undo, viewMode, spanPreview, setSpanPreview } = useZineStore();
 ```
 
 Add these imports:
@@ -1186,7 +1186,10 @@ Add the handler above `handleDragEnd`:
     });
 
     if (decision.action !== 'create' && decision.action !== 'move') {
-      setSpanPreview(null);
+      // Only write when there is something to clear. This branch is the
+      // outcome for every ordinary in-page move and every non-image drag, on
+      // every pointermove — and each write re-renders every ZinePage.
+      if (spanPreview !== null) setSpanPreview(null);
       return;
     }
 
@@ -1219,10 +1222,16 @@ Clear the preview at the top of `handleDragEnd`, alongside the existing resets:
     setSpanPreview(null);
 ```
 
-And wire the handler onto the context:
+And wire the handler onto the context. **`onDragCancel` is required, not optional:** dnd-kit dispatches `Action.DragCancel` on Escape, window resize, and `visibilitychange`, and routes it to `onDragCancel` rather than `onDragEnd` (see `dispatch`'s `type === Action.DragEnd ? 'onDragEnd' : 'onDragCancel'`). Without it, pressing Escape mid-drag leaves the ghost rendered forever.
 
 ```tsx
-    <DndContext sensors={sensors} onDragStart={handleDragStart} onDragMove={handleDragMove} onDragEnd={handleDragEnd}>
+    <DndContext
+      sensors={sensors}
+      onDragStart={handleDragStart}
+      onDragMove={handleDragMove}
+      onDragEnd={handleDragEnd}
+      onDragCancel={() => { setDraggingArenaBlock(null); setDraggingPageNumber(null); setSpanPreview(null); }}
+    >
 ```
 
 - [ ] **Step 3: Render the ghost**
@@ -1230,8 +1239,10 @@ And wire the handler onto the context:
 In `src/components/canvas/ZinePage.tsx`, extend the store destructure:
 
 ```ts
-  const { document: doc, selectBlock, spanPreview } = useZineStore();
+  const { document: doc, selectBlock, spanPreview, viewMode } = useZineStore();
 ```
+
+The ghost is gated on `viewMode === 'spread'` as well as the page id. Belt and braces: a stale preview must never surface among single-view pages.
 
 Add these imports:
 
@@ -1258,7 +1269,7 @@ Then find the block that is being previewed and render a ghost. Replace the `{pa
         {/* Ghost half of an image being dragged across the gutter. Clipped by
             this page just like a real half, so the seam reads correctly for
             the whole gesture. */}
-        {spanPreview?.ghostPageId === page.id && (() => {
+        {viewMode === 'spread' && spanPreview?.ghostPageId === page.id && (() => {
           const source = doc.pages
             .flatMap((p) => p.blocks)
             .find((b) => b.instanceId === spanPreview.instanceId);
