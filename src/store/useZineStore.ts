@@ -5,6 +5,7 @@ import type { ArenaBlock } from '../api/arena';
 import { pickImageUrl } from '../api/arena';
 import { generateId, clamp, now } from '../lib/utils';
 import { PAGE_SIZES } from '../lib/pageSizes';
+import { resolveSpanDrop } from '../lib/spanGeometry';
 
 interface ZineStore {
   document: ZineDocument;
@@ -154,6 +155,47 @@ function touchDoc(doc: ZineDocument): ZineDocument {
   return { ...doc, updatedAt: now() };
 }
 
+interface Located {
+  block: ZineBlock;
+  pageIndex: number;
+}
+
+function locate(pages: ZinePage[], instanceId: string): Located | null {
+  for (let i = 0; i < pages.length; i++) {
+    const block = pages[i].blocks.find((b) => b.instanceId === instanceId);
+    if (block) return { block, pageIndex: i };
+  }
+  return null;
+}
+
+/** The other half of a span, if this block has one. */
+function findPartner(pages: ZinePage[], block: ZineBlock): ZineBlock | null {
+  if (!block.spanId) return null;
+  for (const page of pages) {
+    const found = page.blocks.find(
+      (b) => b.spanId === block.spanId && b.instanceId !== block.instanceId
+    );
+    if (found) return found;
+  }
+  return null;
+}
+
+/** Apply the same patch to a block and, when it is spanned, to its partner. */
+function patchPair(
+  pages: ZinePage[],
+  instanceId: string,
+  patch: Partial<ZineBlock>
+): ZinePage[] {
+  const located = locate(pages, instanceId);
+  if (!located) return pages;
+  const partner = findPartner(pages, located.block);
+  const ids = new Set([instanceId, ...(partner ? [partner.instanceId] : [])]);
+  return pages.map((p) => ({
+    ...p,
+    blocks: p.blocks.map((b) => (ids.has(b.instanceId) ? { ...b, ...patch } : b)),
+  }));
+}
+
 export const useZineStore = create<ZineStore>()(
   persist(
     (set) => ({
@@ -251,20 +293,115 @@ export const useZineStore = create<ZineStore>()(
           };
         }),
 
-      // Drag end — one call per gesture, save history
+      // Drag end — one call per gesture, save history. This is the only place
+      // a span is created or dissolved, so one gesture is always one undo.
       updateBlockPosition: (instanceId, x, y) =>
         set((s) => {
-          const pages = s.document.pages.map((p) => ({
-            ...p,
-            blocks: p.blocks.map((b) =>
-              b.instanceId === instanceId
-                ? { ...b, x: clamp(x, 0, 100 - b.width), y: clamp(y, 0, 100 - b.height) }
-                : b
-            ),
-          }));
+          const located = locate(s.document.pages, instanceId);
+          if (!located) return s;
+          const { block, pageIndex } = located;
+
+          const decision = resolveSpanDrop({
+            pageIndex,
+            pageCount: s.document.pages.length,
+            x,
+            width: block.width,
+            isImage: block.type === 'image',
+            side: block.spanSide,
+            viewMode: s.viewMode,
+          });
+
+          const clampedY = clamp(y, 0, 100 - block.height);
+          let pages = s.document.pages;
+
+          if (decision.action === 'create') {
+            const spanId = generateId();
+            const rightIndex = decision.leftIndex + 1;
+            // The dragged block keeps its instanceId and becomes whichever half
+            // sits on the page it is already on; the other half is the clone.
+            const draggedIsLeft = pageIndex === decision.leftIndex;
+            const cloneId = generateId();
+            const common = { ...block, y: clampedY, spanId };
+
+            const leftHalf: ZineBlock = {
+              ...common,
+              instanceId: draggedIsLeft ? block.instanceId : cloneId,
+              x: decision.xLeft,
+              spanSide: 'left',
+            };
+            const rightHalf: ZineBlock = {
+              ...common,
+              instanceId: draggedIsLeft ? cloneId : block.instanceId,
+              x: decision.xLeft - 100,
+              spanSide: 'right',
+            };
+
+            pages = s.document.pages.map((p, i) => {
+              if (i === decision.leftIndex) {
+                return draggedIsLeft
+                  ? { ...p, blocks: p.blocks.map((b) => (b.instanceId === instanceId ? leftHalf : b)) }
+                  : { ...p, blocks: [...p.blocks, leftHalf] };
+              }
+              if (i === rightIndex) {
+                return draggedIsLeft
+                  ? { ...p, blocks: [...p.blocks, rightHalf] }
+                  : { ...p, blocks: p.blocks.map((b) => (b.instanceId === instanceId ? rightHalf : b)) };
+              }
+              return p;
+            });
+          } else if (decision.action === 'move') {
+            pages = patchPair(s.document.pages, instanceId, { y: clampedY });
+            pages = pages.map((p) => ({
+              ...p,
+              blocks: p.blocks.map((b) =>
+                b.spanId && b.spanId === block.spanId
+                  ? { ...b, x: b.spanSide === 'left' ? decision.xLeft : decision.xLeft - 100 }
+                  : b
+              ),
+            }));
+          } else if (decision.action === 'dissolve') {
+            const partner = findPartner(s.document.pages, block);
+            const survivorId =
+              block.spanSide === decision.keep ? instanceId : partner?.instanceId;
+            const doomedId =
+              block.spanSide === decision.keep ? partner?.instanceId : instanceId;
+            const height = clamp(block.height * decision.scale, 5, 100);
+            pages = s.document.pages.map((p) => ({
+              ...p,
+              blocks: p.blocks
+                .filter((b) => b.instanceId !== doomedId)
+                .map((b) =>
+                  b.instanceId === survivorId
+                    ? {
+                        ...b,
+                        spanId: undefined,
+                        spanSide: undefined,
+                        width: decision.width,
+                        height,
+                        x: clamp(decision.x, 0, 100 - decision.width),
+                        y: clamp(clampedY, 0, 100 - height),
+                      }
+                    : b
+                ),
+            }));
+          } else {
+            pages = s.document.pages.map((p) => ({
+              ...p,
+              blocks: p.blocks.map((b) =>
+                b.instanceId === instanceId
+                  ? { ...b, x: clamp(x, 0, 100 - b.width), y: clampedY }
+                  : b
+              ),
+            }));
+          }
+
           return {
             history: [...s.history.slice(-9), s.document],
             document: { ...s.document, pages },
+            selectedInstanceId:
+              decision.action === 'dissolve' && block.spanSide !== decision.keep
+                ? findPartner(s.document.pages, block)?.instanceId ?? null
+                : s.selectedInstanceId,
           };
         }),
 
