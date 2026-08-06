@@ -14,6 +14,8 @@ export default function BlockInspector() {
     sendToBack,
     bringForward,
     sendBackward,
+    fillSpread,
+    unlinkSpan,
   } = useZineStore();
 
   if (!selectedInstanceId) return null;
@@ -185,6 +187,28 @@ export default function BlockInspector() {
                 ) : null}
               </div>
             </Section>
+
+            {/* Gutter-spanning controls — only for a block already spanning the seam */}
+            {block.spanId && (
+              <Section label="Spread">
+                <div className="flex flex-col gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => fillSpread(block.instanceId)}
+                    className="text-xs text-stone-700 bg-stone-100 hover:bg-stone-200 rounded px-2 py-1.5 transition-colors"
+                  >
+                    Fill spread
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => unlinkSpan(block.instanceId)}
+                    className="text-xs text-stone-700 bg-stone-100 hover:bg-stone-200 rounded px-2 py-1.5 transition-colors"
+                  >
+                    Unlink halves
+                  </button>
+                </div>
+              </Section>
+            )}
 
             {/* Riso halftone effect */}
             {block.type === 'image' && block.imageUrl && (

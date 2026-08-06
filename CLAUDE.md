@@ -53,6 +53,47 @@ Note on zoom: the canvas wrapper is CSS-`scale(zoom)`d, so `getBoundingClientRec
 
 Resize (8 handles: corners + edges) and rotation (handle above the block; Shift snaps to 15°) use raw pointer events with `setPointerCapture` — not dnd-kit. Corner resizes lock to the image's `naturalAspectRatio` when known.
 
+### Gutter-spanning images
+
+An image can run across a two-page spread. It is modelled as **two blocks on
+facing pages sharing a `spanId`**, offset by exactly one page width, each
+clipped by its own page's `overflow: hidden` — so no renderer needs changing,
+and export still emits one PDF page per zine page.
+
+One value drives the pair: `xLeft`, the left half's x in its own page space;
+the right half is always at `xLeft - 100`. All of the arithmetic lives in
+`src/lib/spanGeometry.ts`, whose `resolveSpanDrop()` folds create / move /
+dissolve into one decision.
+
+**Dragging is the whole interaction.** Drag an image across the seam in spread
+view and it spans; drag it fully back onto one page and the span dissolves.
+Both run through `updateBlockPosition`, which already fired once per drag and
+pushed history, so one gesture is always one undo. Spanning requires an image,
+spread view, a minimum straddle width, and a facing partner page — the cover
+(index 0) and a trailing odd page have no seam and refuse.
+
+Clamps relax **only** for blocks carrying a `spanId` (`xLeft` into the straddle
+range, width up to 200); ordinary blocks keep `x ∈ [0, 100 - width]`, which is
+what stops a block being lost off-canvas. `updateBlockSize`, `updateBlockStyle`,
+and `updateBlockRotation` mirror to the partner — `imageOffsetX/Y` especially,
+since mismatched pan is what makes a seam stop lining up. Deleting either half
+via the Delete key removes both; deleting a *page* that holds half a span only
+unlinks the stranded survivor into an ordinary block (`removePage` in
+`useZineStore.ts`) rather than destroying content on a page the user didn't
+touch.
+
+`src/lib/pageUnits.ts` keeps a pair on a facing spread: `reorderWithUnits()`
+(invoked by the store's `reorderPages` action) moves whole units, and
+`applyParity()` inserts a blank `autoPad` page when a pair would otherwise
+start at an even index, stripping unneeded empty pads first so the pass is
+idempotent.
+
+While a drag is in flight the store holds transient `spanPreview` state (not
+persisted, not in history) and `ZinePage` renders a ghost half on the facing
+page, so the image stays visible while crossing the gutter. The ghost is
+gated on spread view, and `onDragCancel` clears the preview so a cancelled
+drag never leaves a stray ghost behind.
+
 ### PDF rendering
 
 `src/components/pdf/` is a parallel React tree using `@react-pdf/renderer` primitives (`Document`, `Page`, `View`, `Text`, `Image`). `PDFBlock` converts percentages to absolute points and prefers `imageUrlLarge`. Only a subset of block styles is applied in the PDF (position/size, z-order, opacity, backgroundColor, fontSize, color, riso halftone); **rotation, borderRadius, circle crop, and image pan are currently canvas-only** and silently dropped on export. The `pdf()` call is in `src/lib/exportPDF.ts`.
