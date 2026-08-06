@@ -1392,9 +1392,10 @@ clipped by its own page's `overflow: hidden` — so no renderer needed changing,
 and export still emits one PDF page per zine page.
 
 One value drives the pair: `xLeft`, the left half's x in its own page space;
-the right half is always at `xLeft - 100`. All of the arithmetic lives in
+the right half is always at `xLeft - 100`. The core arithmetic lives in
 `src/lib/spanGeometry.ts`, whose `resolveSpanDrop()` folds create / move /
-dissolve into one decision.
+dissolve into one decision (the resize-time width floor is computed inline in
+the store from `toXLeft`/`STRADDLE_MIN`).
 
 **Dragging is the whole interaction.** Drag an image across the seam in spread
 view and it spans; drag it fully back onto one page and the span dissolves.
@@ -1418,6 +1419,12 @@ the pass is idempotent.
 While a drag is in flight the store holds transient `spanPreview` state (not
 persisted, not in history) and `ZinePage` renders a ghost half on the facing
 page, so the image stays visible while crossing the gutter.
+
+For a block that is already spanned, the inspector offers **Fill spread**,
+which resets the pair to full bleed across both pages, and **Unlink halves**,
+which breaks the pair so each side can be nudged independently to compensate
+for gutter creep. There is deliberately no "span" button — the drag is the
+gesture.
 ```
 
 - [ ] **Step 3: Build and lint**
