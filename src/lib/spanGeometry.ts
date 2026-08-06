@@ -64,9 +64,14 @@ export function resolveSpanDrop(input: SpanDropInput): SpanDropResult {
   const { pageIndex, pageCount, x, width, isImage, side, viewMode } = input;
 
   // Already spanned: move while it still straddles, otherwise dissolve.
+  // Outside spread view the user can only see one half, so dissolving would
+  // silently delete an invisible partner with no preview — the pair stays
+  // coherent and just moves together instead. Creating a span in single
+  // view is already impossible (see below), so the gesture and its inverse
+  // now share the same spread-view precondition.
   if (side) {
     const xLeft = toXLeft(x, side);
-    if (straddles(xLeft, width)) {
+    if (viewMode !== 'spread' || straddles(xLeft, width)) {
       return { action: 'move', xLeft: clampSpanX(xLeft, width) };
     }
     // Keep the half the image actually sits on; shrink an oversized image so

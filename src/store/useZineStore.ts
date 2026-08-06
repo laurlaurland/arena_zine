@@ -5,7 +5,7 @@ import type { ArenaBlock } from '../api/arena';
 import { pickImageUrl } from '../api/arena';
 import { generateId, clamp, now } from '../lib/utils';
 import { PAGE_SIZES } from '../lib/pageSizes';
-import { resolveSpanDrop, toXLeft, STRADDLE_MIN } from '../lib/spanGeometry';
+import { resolveSpanDrop, toXLeft, clampSpanX, STRADDLE_MIN } from '../lib/spanGeometry';
 import { reorderWithUnits, applyParity } from '../lib/pageUnits';
 
 /**
@@ -45,7 +45,7 @@ interface ZineStore {
   // Blocks
   addBlock: (pageId: string, arenaBlock: ArenaBlock, x: number, y: number) => void;
   removeBlock: (instanceId: string) => void;
-  updateBlockPosition: (instanceId: string, x: number, y: number) => void;
+  updateBlockPosition: (instanceId: string, x: number, y: number, source?: 'drag' | 'resize') => void;
   updateBlockSize: (instanceId: string, width: number, height: number) => void;
   updateBlockStyle: (instanceId: string, style: Partial<Pick<ZineBlock, 'fontSize' | 'fontFamily' | 'backgroundColor' | 'color' | 'opacity' | 'borderRadius' | 'cropShape' | 'imageOffsetX' | 'imageOffsetY' | 'riso'>>) => void;
   fillSpread: (instanceId: string) => void;
@@ -193,9 +193,18 @@ function locate(pages: ZinePage[], instanceId: string): Located | null {
   return null;
 }
 
+/**
+ * Whether a block currently belongs to a span. spanId and spanSide are always
+ * set and cleared together; this is the single predicate everything in the
+ * store should gate on, so the two fields never drift into disagreement.
+ */
+function isSpanned(b: ZineBlock): boolean {
+  return !!b.spanId;
+}
+
 /** The other half of a span, if this block has one. */
 function findPartner(pages: ZinePage[], block: ZineBlock): ZineBlock | null {
-  if (!block.spanId) return null;
+  if (!isSpanned(block)) return null;
   for (const page of pages) {
     const found = page.blocks.find(
       (b) => b.spanId === block.spanId && b.instanceId !== block.instanceId
@@ -295,6 +304,11 @@ export const useZineStore = create<ZineStore>()(
             );
 
           const pages = applyParity(kept, makeAutoPad);
+          // The length<=1 guard above runs before parity, which can itself
+          // shrink the array (stripping an empty auto-pad). A document that
+          // was [emptyAutoPad, X] passes the guard (length 2) but would
+          // leave zero pages after removing X and stripping the pad.
+          if (pages.length === 0) return s;
           return {
             history: [...s.history.slice(-9), s.document],
             document: touchDoc({ ...s.document, pages }),
@@ -336,10 +350,13 @@ export const useZineStore = create<ZineStore>()(
           // A span is one image; deleting half of it would strand an orphan.
           const partner = located ? findPartner(s.document.pages, located.block) : null;
           const doomed = new Set([instanceId, ...(partner ? [partner.instanceId] : [])]);
-          const pages = s.document.pages.map((p) => ({
+          let pages: ZinePage[] = s.document.pages.map((p) => ({
             ...p,
             blocks: p.blocks.filter((b) => !doomed.has(b.instanceId)),
           }));
+          // Deleting a spanned half may leave an auto-pad that only existed
+          // to hold parity for the pair that just broke.
+          pages = applyParity(pages, makeAutoPad);
           return {
             history: [...s.history.slice(-9), s.document],
             document: touchDoc({ ...s.document, pages }),
@@ -349,11 +366,48 @@ export const useZineStore = create<ZineStore>()(
 
       // Drag end — one call per gesture, save history. This is the only place
       // a span is created or dissolved, so one gesture is always one undo.
-      updateBlockPosition: (instanceId, x, y) =>
+      //
+      // `source` distinguishes the drag-end caller (App.tsx's handleDragEnd,
+      // one call per gesture) from the resize caller (PlacedBlock's
+      // handleResizePointerMove, called on every pointermove for the w/n
+      // handles). Only a drag may create or dissolve a span; a resize only
+      // ever repositions the block(s) it already touches, and — like every
+      // other continuous-gesture action in this store — pushes no history,
+      // since captureHistory() already snapshotted once on pointerdown.
+      updateBlockPosition: (instanceId, x, y, source = 'drag') =>
         set((s) => {
           const located = locate(s.document.pages, instanceId);
           if (!located) return s;
           const { block, pageIndex } = located;
+
+          if (source === 'resize') {
+            const clampedY = clamp(y, 0, 100 - block.height);
+            let pages: ZinePage[];
+            if (isSpanned(block)) {
+              // Keep the pair's seam aligned: reproject the dragged half's
+              // proposed x into left-page space, hold it in the straddling
+              // range, and mirror to both halves — never create or dissolve.
+              const xLeft = clampSpanX(toXLeft(x, block.spanSide!), block.width);
+              pages = s.document.pages.map((p) => ({
+                ...p,
+                blocks: p.blocks.map((b) =>
+                  b.spanId && b.spanId === block.spanId
+                    ? { ...b, x: b.spanSide === 'left' ? xLeft : xLeft - 100, y: clampedY }
+                    : b
+                ),
+              }));
+            } else {
+              pages = s.document.pages.map((p) => ({
+                ...p,
+                blocks: p.blocks.map((b) =>
+                  b.instanceId === instanceId
+                    ? { ...b, x: clamp(x, 0, 100 - b.width), y: clampedY }
+                    : b
+                ),
+              }));
+            }
+            return { document: touchDoc({ ...s.document, pages }) };
+          }
 
           const decision = resolveSpanDrop({
             pageIndex,
@@ -445,6 +499,9 @@ export const useZineStore = create<ZineStore>()(
                     : b
                 ),
             }));
+            // Breaking the pair may leave an auto-pad that existed only to
+            // hold the seam's parity with no reason left to be there.
+            pages = applyParity(pages, makeAutoPad);
           } else {
             pages = s.document.pages.map((p) => ({
               ...p,
@@ -470,10 +527,11 @@ export const useZineStore = create<ZineStore>()(
           if (!located) return s;
           const { block } = located;
 
-          if (block.spanSide) {
+          if (isSpanned(block)) {
             // A resize must never break the straddle, so the width floor is
-            // whatever still reaches STRADDLE_MIN past the seam.
-            const xLeft = toXLeft(block.x, block.spanSide);
+            // whatever still reaches STRADDLE_MIN past the seam. spanSide is
+            // always set alongside spanId (see isSpanned).
+            const xLeft = toXLeft(block.x, block.spanSide!);
             const floor = Math.max(2 * STRADDLE_MIN, 100 + STRADDLE_MIN - xLeft);
             const w = clamp(width, floor, 200);
             const h = clamp(height, 5, 100);
@@ -529,12 +587,15 @@ export const useZineStore = create<ZineStore>()(
           const located = locate(s.document.pages, instanceId);
           if (!located?.block.spanId) return s;
           const spanId = located.block.spanId;
-          const pages = s.document.pages.map((p) => ({
+          let pages: ZinePage[] = s.document.pages.map((p) => ({
             ...p,
             blocks: p.blocks.map((b) =>
               b.spanId === spanId ? { ...b, spanId: undefined, spanSide: undefined } : b
             ),
           }));
+          // Unlinking may leave an auto-pad that only existed to hold parity
+          // for the pair that just broke.
+          pages = applyParity(pages, makeAutoPad);
           return {
             history: [...s.history.slice(-9), s.document],
             document: touchDoc({ ...s.document, pages }),

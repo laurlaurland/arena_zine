@@ -145,7 +145,7 @@ export default function PlacedBlock({ block, pageId, pageRef }: Props) {
 
     updateBlockSize(block.instanceId, newW, newH);
     if (corner.includes('w') || corner.includes('n')) {
-      updateBlockPosition(block.instanceId, newX, newY);
+      updateBlockPosition(block.instanceId, newX, newY, 'resize');
     }
   }, [block, pageRef, pageAR, updateBlockSize, updateBlockPosition]);
 

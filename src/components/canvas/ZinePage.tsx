@@ -64,7 +64,7 @@ export default function ZinePage({ page, pageNumber, inSpread }: Props) {
       >
         {page.blocks
           .slice()
-          .filter((b) => b.instanceId !== spanPreview?.hideInstanceId)
+          .filter((b) => !(viewMode === 'spread' && b.instanceId === spanPreview?.hideInstanceId))
           .sort((a, b) => a.zIndex - b.zIndex)
           .map((block) => (
             <PlacedBlock
