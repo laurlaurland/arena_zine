@@ -1000,10 +1000,34 @@ function makeAutoPad(): ZinePage {
       removePage: (pageId) =>
         set((s) => {
           if (s.document.pages.length <= 1) return s;
-          const pages = applyParity(
-            s.document.pages.filter((p) => p.id !== pageId),
-            makeAutoPad
+
+          // The page being deleted may hold half of a span. Leaving the other
+          // half with a spanId whose partner no longer exists is the orphan
+          // state paired deletion exists to prevent — but destroying content on
+          // a page the user did not delete would be worse, so the survivor is
+          // unlinked into an ordinary block rather than removed.
+          const orphanedSpanIds = new Set(
+            (s.document.pages.find((p) => p.id === pageId)?.blocks ?? [])
+              .map((b) => b.spanId)
+              .filter((id): id is string => !!id)
           );
+
+          const kept = s.document.pages
+            .filter((p) => p.id !== pageId)
+            .map((p) =>
+              orphanedSpanIds.size === 0
+                ? p
+                : {
+                    ...p,
+                    blocks: p.blocks.map((b) =>
+                      b.spanId && orphanedSpanIds.has(b.spanId)
+                        ? { ...b, spanId: undefined, spanSide: undefined }
+                        : b
+                    ),
+                  }
+            );
+
+          const pages = applyParity(kept, makeAutoPad);
           return {
             history: [...s.history.slice(-9), s.document],
             document: touchDoc({ ...s.document, pages }),
@@ -1029,14 +1053,20 @@ npm run build && npm run lint
 
 Expected: build succeeds; lint shows only the pre-existing `ChannelPicker.tsx` warning.
 
-- [ ] **Step 4: Verify in the browser**
+- [ ] **Step 4: Verify headlessly by driving the store**
 
-With a document of at least 5 pages and a spanned pair on pages 1–2:
+Extend `$SCRATCH/check-store-span.ts` (all prior assertions must still pass) and run it with `npx tsx`. Assert at least:
 
-1. Drag the caption of page 1 to a later position. Expected: pages 1 and 2 move together and still land on a facing spread.
-2. Drag an unrelated page so it would land inside the pair. Expected: a blank page appears so the pair stays on a facing spread.
-3. Delete a page before the pair. Expected: the pair stays on a facing spread; any blank page that is no longer needed disappears.
-4. Cmd+Z after each. Expected: one undo per gesture.
+1. Reordering a page carrying half of a span moves **both** pages together, and they still land on a facing spread.
+2. Reordering an unrelated page into the middle of a bound pair does not split it — an `autoPad` page is inserted so the pair stays on a facing spread.
+3. Deleting a page before a pair re-runs parity, and an `autoPad` that is no longer needed and still empty disappears.
+4. An `autoPad` page the user has put a block on is **not** removed.
+5. `removePage` still refuses to remove the last remaining page.
+6. **Deleting a page that holds half of a span unlinks the survivor**: the surviving block keeps its position and content but has `spanId` and `spanSide` cleared, so no block is left with a `spanId` whose partner does not exist. Assert this for deleting the left half's page *and* the right half's page.
+7. A no-op reorder (from and to within the same unit) pushes no history and leaves the document identical by reference.
+8. Each real reorder and each real page deletion pushes exactly one history entry, and one `undo()` restores the previous page order exactly.
+
+The browser checks belong to the manual pass in Task 7 Step 4, not here.
 
 - [ ] **Step 5: Commit**
 
