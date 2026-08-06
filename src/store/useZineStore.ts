@@ -5,7 +5,7 @@ import type { ArenaBlock } from '../api/arena';
 import { pickImageUrl } from '../api/arena';
 import { generateId, clamp, now } from '../lib/utils';
 import { PAGE_SIZES } from '../lib/pageSizes';
-import { resolveSpanDrop } from '../lib/spanGeometry';
+import { resolveSpanDrop, toXLeft, STRADDLE_MIN } from '../lib/spanGeometry';
 
 interface ZineStore {
   document: ZineDocument;
@@ -29,6 +29,8 @@ interface ZineStore {
   updateBlockPosition: (instanceId: string, x: number, y: number) => void;
   updateBlockSize: (instanceId: string, width: number, height: number) => void;
   updateBlockStyle: (instanceId: string, style: Partial<Pick<ZineBlock, 'fontSize' | 'fontFamily' | 'backgroundColor' | 'color' | 'opacity' | 'borderRadius' | 'cropShape' | 'imageOffsetX' | 'imageOffsetY' | 'riso'>>) => void;
+  fillSpread: (instanceId: string) => void;
+  unlinkSpan: (instanceId: string) => void;
 
   // Z-order
   bringToFront: (instanceId: string) => void;
@@ -282,9 +284,13 @@ export const useZineStore = create<ZineStore>()(
 
       removeBlock: (instanceId) =>
         set((s) => {
+          const located = locate(s.document.pages, instanceId);
+          // A span is one image; deleting half of it would strand an orphan.
+          const partner = located ? findPartner(s.document.pages, located.block) : null;
+          const doomed = new Set([instanceId, ...(partner ? [partner.instanceId] : [])]);
           const pages = s.document.pages.map((p) => ({
             ...p,
-            blocks: p.blocks.filter((b) => b.instanceId !== instanceId),
+            blocks: p.blocks.filter((b) => !doomed.has(b.instanceId)),
           }));
           return {
             history: [...s.history.slice(-9), s.document],
@@ -412,6 +418,21 @@ export const useZineStore = create<ZineStore>()(
       // Called on every pointermove during resize — history captured on pointerdown via captureHistory()
       updateBlockSize: (instanceId, width, height) =>
         set((s) => {
+          const located = locate(s.document.pages, instanceId);
+          if (!located) return s;
+          const { block } = located;
+
+          if (block.spanSide) {
+            // A resize must never break the straddle, so the width floor is
+            // whatever still reaches STRADDLE_MIN past the seam.
+            const xLeft = toXLeft(block.x, block.spanSide);
+            const floor = Math.max(2 * STRADDLE_MIN, 100 + STRADDLE_MIN - xLeft);
+            const w = clamp(width, floor, 200);
+            const h = clamp(height, 5, 100);
+            const pages = patchPair(s.document.pages, instanceId, { width: w, height: h });
+            return { document: touchDoc({ ...s.document, pages }) };
+          }
+
           const pages = s.document.pages.map((p) => ({
             ...p,
             blocks: p.blocks.map((b) =>
@@ -425,14 +446,51 @@ export const useZineStore = create<ZineStore>()(
 
       // Called on every pointermove during rotate / slider drag — history captured on pointerdown
       updateBlockStyle: (instanceId, style) =>
+        set((s) => ({
+          document: touchDoc({
+            ...s.document,
+            pages: patchPair(s.document.pages, instanceId, style),
+          }),
+        })),
+
+      // Full bleed across both pages. A button because hitting exactly this by
+      // dragging is fiddly.
+      fillSpread: (instanceId) =>
         set((s) => {
+          const located = locate(s.document.pages, instanceId);
+          if (!located?.block.spanId) return s;
+          const spanId = located.block.spanId;
           const pages = s.document.pages.map((p) => ({
             ...p,
             blocks: p.blocks.map((b) =>
-              b.instanceId === instanceId ? { ...b, ...style } : b
+              b.spanId === spanId
+                ? { ...b, x: b.spanSide === 'left' ? 0 : -100, y: 0, width: 200, height: 100 }
+                : b
             ),
           }));
-          return { document: touchDoc({ ...s.document, pages }) };
+          return {
+            history: [...s.history.slice(-9), s.document],
+            document: touchDoc({ ...s.document, pages }),
+          };
+        }),
+
+      // Break the link so each half can be nudged independently, e.g. to
+      // compensate for the few mm a binding eats at the gutter.
+      unlinkSpan: (instanceId) =>
+        set((s) => {
+          const located = locate(s.document.pages, instanceId);
+          if (!located?.block.spanId) return s;
+          const spanId = located.block.spanId;
+          const pages = s.document.pages.map((p) => ({
+            ...p,
+            blocks: p.blocks.map((b) =>
+              b.spanId === spanId ? { ...b, spanId: undefined, spanSide: undefined } : b
+            ),
+          }));
+          return {
+            history: [...s.history.slice(-9), s.document],
+            document: touchDoc({ ...s.document, pages }),
+          };
         }),
 
       updateAspectRatio: (instanceId, ratio) =>
@@ -512,15 +570,12 @@ export const useZineStore = create<ZineStore>()(
 
       // Called on every pointermove during rotate — history captured on pointerdown
       updateBlockRotation: (instanceId, degrees) =>
-        set((s) => {
-          const pages = s.document.pages.map((p) => ({
-            ...p,
-            blocks: p.blocks.map((b) =>
-              b.instanceId === instanceId ? { ...b, rotation: degrees } : b
-            ),
-          }));
-          return { document: touchDoc({ ...s.document, pages }) };
-        }),
+        set((s) => ({
+          document: touchDoc({
+            ...s.document,
+            pages: patchPair(s.document.pages, instanceId, { rotation: degrees }),
+          }),
+        })),
 
       selectBlock: (instanceId) => set({ selectedInstanceId: instanceId }),
 
