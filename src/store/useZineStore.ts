@@ -8,12 +8,30 @@ import { PAGE_SIZES } from '../lib/pageSizes';
 import { resolveSpanDrop, toXLeft, STRADDLE_MIN } from '../lib/spanGeometry';
 import { reorderWithUnits, applyParity } from '../lib/pageUnits';
 
+/**
+ * Transient preview of where a spanning half will land, published while a
+ * canvas drag is in flight. Never persisted, never pushed to history.
+ */
+export interface SpanPreview {
+  /** The half being dragged. */
+  instanceId: string;
+  /** Page the ghost half renders on. */
+  ghostPageId: string;
+  /** Ghost position, in the ghost page's own percentage space. */
+  x: number;
+  y: number;
+  /** Existing partner to suppress, so it does not double up with the ghost. */
+  hideInstanceId?: string;
+}
+
 interface ZineStore {
   document: ZineDocument;
   history: ZineDocument[];    // undo stack (not persisted)
   selectedInstanceId: string | null;
   zoom: number;
   viewMode: 'single' | 'spread';   // canvas layout (not persisted)
+  spanPreview: SpanPreview | null;   // live drag preview (not persisted)
+  setSpanPreview: (preview: SpanPreview | null) => void;
 
   // Document
   setDocumentTitle: (title: string) => void;
@@ -211,6 +229,7 @@ export const useZineStore = create<ZineStore>()(
       selectedInstanceId: null,
       zoom: 0.8,
       viewMode: 'single',
+      spanPreview: null,
 
       // ── History helpers ────────────────────────────────────────────────────
       captureHistory: () =>
@@ -611,6 +630,8 @@ export const useZineStore = create<ZineStore>()(
       setZoom: (zoom) => set({ zoom: clamp(zoom, 0.25, 2) }),
 
       setViewMode: (mode) => set({ viewMode: mode }),
+
+      setSpanPreview: (spanPreview) => set({ spanPreview }),
     }),
     {
       name: 'arena-zine-document',

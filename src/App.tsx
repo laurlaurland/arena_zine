@@ -6,6 +6,7 @@ import {
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragMoveEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
 import { useArenaStore } from './store/useArenaStore';
@@ -17,6 +18,7 @@ import Toolbar from './components/toolbar/Toolbar';
 import BlockInspector from './components/inspector/BlockInspector';
 import { pickImageUrl } from './api/arena';
 import type { ArenaBlock } from './api/arena';
+import { resolveSpanDrop } from './lib/spanGeometry';
 
 function DragPreview({ arenaBlock }: { arenaBlock: ArenaBlock }) {
   const thumb = pickImageUrl(arenaBlock.image, 'thumb', 'thumbnail', 'display');
@@ -29,7 +31,7 @@ function DragPreview({ arenaBlock }: { arenaBlock: ArenaBlock }) {
 }
 
 function Editor() {
-  const { document: doc, addBlock, updateBlockPosition, reorderPages, selectedInstanceId, removeBlock, selectBlock, undo } = useZineStore();
+  const { document: doc, addBlock, updateBlockPosition, reorderPages, selectedInstanceId, removeBlock, selectBlock, undo, viewMode, setSpanPreview } = useZineStore();
   const [draggingArenaBlock, setDraggingArenaBlock] = useState<ArenaBlock | null>(null);
   const [draggingPageNumber, setDraggingPageNumber] = useState<number | null>(null);
 
@@ -67,9 +69,66 @@ function Editor() {
     }
   }
 
+  // Publishes where the spanning half will land, so the image stays visible
+  // while it crosses the gutter instead of being clipped at the page edge.
+  function handleDragMove(event: DragMoveEvent) {
+    const { active, delta } = event;
+    const data = active.data.current;
+    if (data?.source !== 'canvas' || !data?.instanceId) return;
+    if (viewMode !== 'spread') return;
+
+    const pageIndex = doc.pages.findIndex((p) => p.id === data.pageId);
+    if (pageIndex === -1) return;
+    const block = doc.pages[pageIndex].blocks.find((b) => b.instanceId === data.instanceId);
+    if (!block) return;
+
+    const pageEl = document.getElementById(`page-${data.pageId}`);
+    if (!pageEl) return;
+    const pageRect = pageEl.getBoundingClientRect();
+    const x = block.x + (delta.x / pageRect.width) * 100;
+    const y = block.y + (delta.y / pageRect.height) * 100;
+
+    const decision = resolveSpanDrop({
+      pageIndex,
+      pageCount: doc.pages.length,
+      x,
+      width: block.width,
+      isImage: block.type === 'image',
+      side: block.spanSide,
+      viewMode,
+    });
+
+    if (decision.action !== 'create' && decision.action !== 'move') {
+      setSpanPreview(null);
+      return;
+    }
+
+    // Which page is the dragged half on, and which gets the ghost?
+    const isLeftHalf = block.spanSide ? block.spanSide === 'left' : pageIndex % 2 === 1;
+    const leftIndex = isLeftHalf ? pageIndex : pageIndex - 1;
+    const ghostIndex = isLeftHalf ? leftIndex + 1 : leftIndex;
+    const ghostPage = doc.pages[ghostIndex];
+    if (!ghostPage) return;
+
+    const partner = block.spanId
+      ? doc.pages.flatMap((p) => p.blocks).find(
+          (b) => b.spanId === block.spanId && b.instanceId !== block.instanceId
+        )
+      : undefined;
+
+    setSpanPreview({
+      instanceId: block.instanceId,
+      ghostPageId: ghostPage.id,
+      x: isLeftHalf ? decision.xLeft - 100 : decision.xLeft,
+      y,
+      hideInstanceId: partner?.instanceId,
+    });
+  }
+
   function handleDragEnd(event: DragEndEvent) {
     setDraggingArenaBlock(null);
     setDraggingPageNumber(null);
+    setSpanPreview(null);
     const { active, over, delta } = event;
     if (!over) return;
 
@@ -116,7 +175,7 @@ function Editor() {
   }
 
   return (
-    <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+    <DndContext sensors={sensors} onDragStart={handleDragStart} onDragMove={handleDragMove} onDragEnd={handleDragEnd}>
       <div className="flex flex-col h-screen" onClick={() => selectBlock(null)}>
         <Toolbar />
         <div className="flex flex-1 overflow-hidden">

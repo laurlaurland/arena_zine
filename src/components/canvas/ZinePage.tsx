@@ -3,6 +3,7 @@ import { useDroppable, useDraggable } from '@dnd-kit/core';
 import { useZineStore } from '../../store/useZineStore';
 import { PAGE_SIZES } from '../../lib/pageSizes';
 import PlacedBlock from './PlacedBlock';
+import ImageBlock from '../blocks/ImageBlock';
 import type { ZinePage as ZinePageType } from '../../types/zine';
 
 interface Props {
@@ -16,7 +17,7 @@ interface Props {
 export const CANVAS_PAGE_WIDTH = 560;
 
 export default function ZinePage({ page, pageNumber, inSpread }: Props) {
-  const { document: doc, selectBlock } = useZineStore();
+  const { document: doc, selectBlock, spanPreview } = useZineStore();
   const pageSize = PAGE_SIZES[doc.pageSize];
   const aspectRatio = pageSize.heightMm / pageSize.widthMm;
   const pageHeight = CANVAS_PAGE_WIDTH * aspectRatio;
@@ -63,6 +64,7 @@ export default function ZinePage({ page, pageNumber, inSpread }: Props) {
       >
         {page.blocks
           .slice()
+          .filter((b) => b.instanceId !== spanPreview?.hideInstanceId)
           .sort((a, b) => a.zIndex - b.zIndex)
           .map((block) => (
             <PlacedBlock
@@ -72,6 +74,36 @@ export default function ZinePage({ page, pageNumber, inSpread }: Props) {
               pageRef={pageRef}
             />
           ))}
+
+        {/* Ghost half of an image being dragged across the gutter. Clipped by
+            this page just like a real half, so the seam reads correctly for
+            the whole gesture. */}
+        {spanPreview?.ghostPageId === page.id && (() => {
+          const source = doc.pages
+            .flatMap((p) => p.blocks)
+            .find((b) => b.instanceId === spanPreview.instanceId);
+          if (!source) return null;
+          return (
+            <div
+              aria-hidden
+              style={{
+                position: 'absolute',
+                left: `${spanPreview.x}%`,
+                top: `${spanPreview.y}%`,
+                width: `${source.width}%`,
+                height: `${source.height}%`,
+                zIndex: source.zIndex,
+                opacity: source.opacity ?? 1,
+                transform: source.rotation ? `rotate(${source.rotation}deg)` : undefined,
+                borderRadius: source.cropShape === 'circle' ? '50%' : source.borderRadius ? `${source.borderRadius}%` : undefined,
+                overflow: 'hidden',
+                pointerEvents: 'none',
+              }}
+            >
+              <ImageBlock block={source} />
+            </div>
+          );
+        })()}
       </div>
       <p
         ref={setHandleRef}
