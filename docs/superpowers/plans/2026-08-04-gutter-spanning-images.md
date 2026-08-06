@@ -638,6 +638,10 @@ Replace the whole existing `updateBlockPosition` implementation (from `// Drag e
 
           const clampedY = clamp(y, 0, 100 - block.height);
           let pages = s.document.pages;
+          // Selection is set only by clicking a block, and dnd-kit's 8px
+          // activation constraint swallows the click once a drag starts — so
+          // the selected block and the dragged block can be different halves.
+          let nextSelectedId = s.selectedInstanceId;
 
           if (decision.action === 'create') {
             const spanId = generateId();
@@ -691,6 +695,9 @@ Replace the whole existing `updateBlockPosition` implementation (from `// Drag e
             const doomedId =
               block.spanSide === decision.keep ? partner?.instanceId : instanceId;
             const height = clamp(block.height * decision.scale, 5, 100);
+            // Never leave selection pointing at the half we just removed —
+            // whether or not that half is the one being dragged.
+            if (s.selectedInstanceId === doomedId) nextSelectedId = survivorId ?? null;
             pages = s.document.pages.map((p) => ({
               ...p,
               blocks: p.blocks
@@ -723,10 +730,7 @@ Replace the whole existing `updateBlockPosition` implementation (from `// Drag e
           return {
             history: [...s.history.slice(-9), s.document],
             document: { ...s.document, pages },
-            selectedInstanceId:
-              decision.action === 'dissolve' && block.spanSide !== decision.keep
-                ? findPartner(s.document.pages, block)?.instanceId ?? null
-                : s.selectedInstanceId,
+            selectedInstanceId: nextSelectedId,
           };
         }),
 ```
@@ -739,16 +743,22 @@ npm run build && npm run lint
 
 Expected: build succeeds; lint shows only the pre-existing `ChannelPicker.tsx` warning.
 
-- [ ] **Step 4: Verify in the browser**
+- [ ] **Step 4: Verify headlessly by driving the store**
 
-Start the dev server (`npm run dev`), open http://localhost:5173/, switch to **Spread** view, and make sure the document has at least 3 pages.
+The store is plain JavaScript, so drive it directly rather than clicking a UI. Write a throwaway script at `$SCRATCH/check-store-span.ts` and run it with `npx tsx`. Zustand's `persist` middleware expects `localStorage`; stub it on `globalThis` and import the store with a dynamic `import()` **after** the stub, since a static import would be hoisted above it.
 
-1. Drag an image on page 1 (a left slot) rightward until it crosses the seam. Expected: a matching half appears on page 2 and the seam is continuous.
-2. Drag either half a short distance. Expected: both move; the seam holds.
-3. Drag the image fully back onto one page. Expected: it becomes a single block and the other half is gone.
-4. Drag a **text** block toward the seam. Expected: it stops at the page edge as before.
-5. Switch to **Single** view and drag an image toward the right edge. Expected: it stops at the edge; no span is created.
-6. Press Cmd+Z after each of the above. Expected: exactly one undo reverses each gesture.
+Assert at least:
+
+1. Dragging an image on an odd-index page across the seam creates a partner on the facing page, with the right `x`, `spanId` and `spanSide` — and the dragged block keeps its own `instanceId`.
+2. The same, dragging **leftward from an even-index (right) slot**. This is the direction where `draggedIsLeft` is false and the keep/clone identity logic inverts, so it must be covered explicitly.
+3. Dragging either half moves both, preserving `partner.x === draggedXLeft - 100`.
+4. Dragging fully onto one page removes the partner, clears `spanId`/`spanSide`, caps width at 100, and scales height by the same factor.
+5. An ordinary non-spanned block is still clamped to `[0, 100 - width]`.
+6. In single view, crossing the seam creates no span.
+7. Each gesture pushes exactly one history entry, so one `undo()` reverses it.
+8. **Selection never dangles.** Select one half, then drag *the other* half so the span dissolves and the selected half is the one removed; assert `selectedInstanceId` now points at the survivor, not at a block that no longer exists. Also assert selection is untouched in the create and move cases.
+
+The browser checks belong to the manual pass in Task 7 Step 4, not here.
 
 - [ ] **Step 5: Commit**
 
