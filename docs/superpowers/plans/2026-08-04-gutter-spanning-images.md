@@ -91,7 +91,8 @@ eq('straddles centred', straddles(80, 40), true);
 eq('straddles exact left edge', straddles(95, 40), true);
 eq('straddles just past left tolerance', straddles(95.1, 40), false);
 eq('straddles exact right edge', straddles(65, 40), true);
-eq('straddles short of right tolerance', straddles(66, 40), false);
+// xLeft + W >= 105 is a LOWER bound on xLeft, so the failing case is below 65.
+eq('straddles short of right tolerance', straddles(64, 40), false);
 eq('straddles full bleed', straddles(0, 200), true);
 
 // clampSpanX pins into [105 - W, 95]
