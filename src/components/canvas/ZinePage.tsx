@@ -17,7 +17,7 @@ interface Props {
 export const CANVAS_PAGE_WIDTH = 560;
 
 export default function ZinePage({ page, pageNumber, inSpread }: Props) {
-  const { document: doc, selectBlock, spanPreview } = useZineStore();
+  const { document: doc, selectBlock, spanPreview, viewMode } = useZineStore();
   const pageSize = PAGE_SIZES[doc.pageSize];
   const aspectRatio = pageSize.heightMm / pageSize.widthMm;
   const pageHeight = CANVAS_PAGE_WIDTH * aspectRatio;
@@ -78,7 +78,7 @@ export default function ZinePage({ page, pageNumber, inSpread }: Props) {
         {/* Ghost half of an image being dragged across the gutter. Clipped by
             this page just like a real half, so the seam reads correctly for
             the whole gesture. */}
-        {spanPreview?.ghostPageId === page.id && (() => {
+        {viewMode === 'spread' && spanPreview?.ghostPageId === page.id && (() => {
           const source = doc.pages
             .flatMap((p) => p.blocks)
             .find((b) => b.instanceId === spanPreview.instanceId);

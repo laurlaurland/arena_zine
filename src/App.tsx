@@ -31,7 +31,7 @@ function DragPreview({ arenaBlock }: { arenaBlock: ArenaBlock }) {
 }
 
 function Editor() {
-  const { document: doc, addBlock, updateBlockPosition, reorderPages, selectedInstanceId, removeBlock, selectBlock, undo, viewMode, setSpanPreview } = useZineStore();
+  const { document: doc, addBlock, updateBlockPosition, reorderPages, selectedInstanceId, removeBlock, selectBlock, undo, viewMode, spanPreview, setSpanPreview } = useZineStore();
   const [draggingArenaBlock, setDraggingArenaBlock] = useState<ArenaBlock | null>(null);
   const [draggingPageNumber, setDraggingPageNumber] = useState<number | null>(null);
 
@@ -99,7 +99,10 @@ function Editor() {
     });
 
     if (decision.action !== 'create' && decision.action !== 'move') {
-      setSpanPreview(null);
+      // Only write when there is something to clear. This branch is the
+      // outcome for every ordinary in-page move and every non-image drag, on
+      // every pointermove — and each write re-renders every ZinePage.
+      if (spanPreview !== null) setSpanPreview(null);
       return;
     }
 
@@ -175,7 +178,13 @@ function Editor() {
   }
 
   return (
-    <DndContext sensors={sensors} onDragStart={handleDragStart} onDragMove={handleDragMove} onDragEnd={handleDragEnd}>
+    <DndContext
+      sensors={sensors}
+      onDragStart={handleDragStart}
+      onDragMove={handleDragMove}
+      onDragEnd={handleDragEnd}
+      onDragCancel={() => { setDraggingArenaBlock(null); setDraggingPageNumber(null); setSpanPreview(null); }}
+    >
       <div className="flex flex-col h-screen" onClick={() => selectBlock(null)}>
         <Toolbar />
         <div className="flex flex-1 overflow-hidden">
