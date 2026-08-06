@@ -194,14 +194,14 @@ export default function BlockInspector() {
                 <div className="flex flex-col gap-1.5">
                   <button
                     type="button"
-                    onClick={() => fillSpread(block.instanceId)}
+                    onClick={() => fillSpread(selectedInstanceId)}
                     className="text-xs text-stone-700 bg-stone-100 hover:bg-stone-200 rounded px-2 py-1.5 transition-colors"
                   >
                     Fill spread
                   </button>
                   <button
                     type="button"
-                    onClick={() => unlinkSpan(block.instanceId)}
+                    onClick={() => unlinkSpan(selectedInstanceId)}
                     className="text-xs text-stone-700 bg-stone-100 hover:bg-stone-200 rounded px-2 py-1.5 transition-colors"
                   >
                     Unlink halves
