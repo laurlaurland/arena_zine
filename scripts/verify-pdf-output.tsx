@@ -5,8 +5,11 @@
  * Run: npx tsx --tsconfig tsconfig.app.json scripts/verify-pdf-output.tsx
  *
  * The --tsconfig flag is required, and points at tsconfig.app.json
- * specifically (not a config of this script's own). This file itself has
- * no JSX (see bufferOf below), but it imports ZinePDF -> PDFPage -> PDFBlock,
+ * specifically (not a config of this script's own). This file has a little
+ * JSX of its own now (streamOf's pdf() call), but that's incidental: React
+ * is imported by name above, so this file compiles fine under a classic JSX
+ * transform regardless of which tsconfig get-tsconfig lands on. The flag is
+ * load-bearing for what this file imports -- ZinePDF -> PDFPage -> PDFBlock,
  * which do use JSX and rely on the automatic runtime declared only in
  * tsconfig.app.json's `jsx: "react-jsx"`. Without the flag, tsx's default
  * tsconfig lookup lands on the repo's root tsconfig.json, which is
@@ -55,11 +58,10 @@ function doc(block: Partial<ZineBlock>): ZineDocument {
 
 /** Render a document, return the raw PDF buffer. */
 async function bufferOf(document: ZineDocument): Promise<Buffer> {
-  // No JSX here on purpose: this file's own compile doesn't depend on the
-  // --tsconfig flag documented above (which exists only for ZinePDF and its
-  // children, see the file header). Writing this call directly, instead of
-  // `<ZinePDF document={document} />`, means this file has no JSX transform
-  // to get right at all, one less thing for that flag to be load-bearing for.
+  // No JSX here: this call predates streamOf's separation-aware pdf() call
+  // below and was left as React.createElement rather than converted to
+  // match, since a mix costs nothing (both compile the same way here, see
+  // the file header) and it's one fewer thing to touch.
   const result: unknown = await pdf(React.createElement(ZinePDF, { document })).toBuffer();
   return Buffer.isBuffer(result)
     ? result
@@ -73,8 +75,17 @@ async function bufferOf(document: ZineDocument): Promise<Buffer> {
 }
 
 /** Every inflated content stream, concatenated: the actual drawing operators. */
-async function streamOf(document: ZineDocument): Promise<string> {
-  const buf = await bufferOf(document);
+async function streamOf(document: ZineDocument, separation?: { kind: 'key'; includeInstanceIds?: string[] } | { kind: 'ink'; ink: string }): Promise<string> {
+  const result: unknown = await pdf(<ZinePDF document={document} separation={separation} />).toBuffer();
+  const buf = Buffer.isBuffer(result)
+    ? result
+    : await new Promise<Buffer>((res, rej) => {
+        const chunks: Buffer[] = [];
+        const s = result as NodeJS.ReadableStream;
+        s.on('data', (d: Buffer) => chunks.push(d));
+        s.on('end', () => res(Buffer.concat(chunks)));
+        s.on('error', rej);
+      });
   const latin = buf.toString('latin1');
   let out = '';
   const re = /stream\r?\n/g;
@@ -167,6 +178,23 @@ function hasFractionalAlpha(raw: string): boolean {
   return alphaValues(raw).some((ca) => ca > 0 && ca < 1);
 }
 
+/** A two-page fixture holding one spanned pair, both halves styled identically. */
+function spanDoc(over: Partial<ZineBlock>): ZineDocument {
+  const half = (id: string, x: number, side: 'left' | 'right') => ({
+    instanceId: id, arenaId: 1, type: 'image', imageUrl: PNG,
+    x, y: 10, width: 100, height: 40, zIndex: 0,
+    spanId: 's1', spanSide: side, ...over,
+  } as ZineBlock);
+  return {
+    id: 'd1', title: 'span fixture', pageSize: 'A4',
+    pages: [
+      { id: 'p1', order: 0, blocks: [half('L', 60, 'left')] },
+      { id: 'p2', order: 1, blocks: [half('R', -40, 'right')] },
+    ],
+    createdAt: '', updatedAt: '',
+  } as ZineDocument;
+}
+
 async function main() {
   // --- rotation ---
   const plain = await streamOf(doc({}));
@@ -205,6 +233,31 @@ async function main() {
   const both = await streamOf(doc({ rotation: 30, borderRadius: 40 }));
   check('rotation survives alongside a clip', hasRotationMatrix(both));
   check('clip survives alongside a rotation', hasRoundedClip(both));
+
+  // --- spanned pairs ---
+  // Both halves are the same size and carry the same styles, so they must
+  // emit the same radius and the same rotation. A pair that rotated by
+  // different amounts, or rounded by different amounts, would break the seam.
+  const spanPlain = await streamOf(spanDoc({}));
+  const spanRotated = await streamOf(spanDoc({ rotation: 30 }));
+  const rotationMatrices = (s: string) =>
+    s.split('\n').map((l) => l.trim()).filter((l) => /cm$/.test(l))
+     .filter((l) => { const m2 = /^(-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) /.exec(l);
+                      return m2 ? parseFloat(m2[2]) !== 0 || parseFloat(m2[3]) !== 0 : false; });
+  check('unrotated span emits no rotation', rotationMatrices(spanPlain).length === 0);
+  check('both span halves rotate', rotationMatrices(spanRotated).length === 2);
+  check('both span halves rotate identically',
+        new Set(rotationMatrices(spanRotated).map((l) => l.split(' ').slice(0, 4).join(' '))).size === 1);
+
+  // --- separations share geometry ---
+  // Only colour may differ between plates. Identical geometry is what makes
+  // overprinted plates register.
+  const composite = await streamOf(doc({ rotation: 30, borderRadius: 40 }));
+  const keyPlate = await streamOf(doc({ rotation: 30, borderRadius: 40 }), { kind: 'key' });
+  check('key plate keeps the rotation', hasRotationMatrix(keyPlate));
+  check('key plate keeps the clip', hasRoundedClip(keyPlate));
+  check('key plate geometry matches the composite',
+        rotationMatrices(keyPlate).join('|') === rotationMatrices(composite).join('|'));
 
   console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILURE(S)`);
   process.exit(failures === 0 ? 0 : 1);

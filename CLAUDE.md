@@ -103,7 +103,33 @@ gesture.
 
 ### PDF rendering
 
-`src/components/pdf/` is a parallel React tree using `@react-pdf/renderer` primitives (`Document`, `Page`, `View`, `Text`, `Image`). `PDFBlock` converts percentages to absolute points and prefers `imageUrlLarge`. Only a subset of block styles is applied in the PDF (position/size, z-order, opacity, backgroundColor, fontSize, color, riso halftone); **rotation, borderRadius, circle crop, and image pan are currently canvas-only** and silently dropped on export. The `pdf()` call is in `src/lib/exportPDF.ts`.
+`src/components/pdf/` is a parallel React tree using `@react-pdf/renderer` primitives (`Document`, `Page`, `View`, `Text`, `Image`). `PDFBlock` converts percentages to absolute points and prefers `imageUrlLarge`. The `pdf()` call is in `src/lib/exportPDF.ts`.
+
+Block styles are mapped by `src/lib/pdfBlockStyles.ts`, a pure
+`(block, pageSize) → styles` function covering position/size, rotation,
+border radius, circle crop, image pan, and opacity. `PDFBlock` renders it as
+**two nested `View`s** — outer carries the rotation, inner carries
+`overflow: hidden` and the radius — because `@react-pdf/renderer` clips
+*before* it transforms, so a single View would clip rotated content with an
+unrotated rectangle. The canvas splits the same way in `PlacedBlock`.
+
+Two divergences are deliberate. CSS `border-radius: 50%` on a non-square
+block draws an ellipse; a single-valued PDF radius draws a stadium (exact on
+square blocks). And react-pdf has no group opacity, so `opacity` is applied
+to each painting leaf rather than to the container — visibly different only
+when a translucent image sits on a translucent background.
+
+`fontSize` is converted from canvas pixels to points by
+`pageSize.widthPt / CANVAS_PAGE_WIDTH`; it is the one style that is not a
+percentage and so does not survive the canvas/PDF gap on its own.
+`fontFamily` is **not** applied — nothing in the app sets it, and honouring
+it would require `Font.register()` with real font files.
+
+`scripts/verify-pdf-output.tsx` (`npx tsx --tsconfig tsconfig.app.json
+scripts/verify-pdf-output.tsx`) renders fixtures and asserts the PDF
+operators each style must emit, with a negative control per assertion. A
+style react-pdf ignores is not a type error, so `npm run build` cannot catch
+a regression here.
 
 ### Riso effect
 
