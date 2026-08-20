@@ -65,7 +65,7 @@ export default function PDFBlock({ block, pageSize, risoImage, separation }: Pro
       <Frame outer={styles.outer} inner={inner}>
         <Text
           style={{
-            fontSize: block.fontSize ?? 10,
+            fontSize: styles.text.fontSize,
             fontFamily: undefined,
             color: textColor,
             padding: 4,

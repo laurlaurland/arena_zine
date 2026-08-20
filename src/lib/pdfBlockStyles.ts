@@ -1,4 +1,5 @@
 import type { ZineBlock, PageSize } from '../types/zine';
+import { CANVAS_PAGE_WIDTH } from './pageSizes';
 
 /**
  * Style objects for one block in the PDF tree.
@@ -42,6 +43,7 @@ export interface PDFBlockStyles {
   };
   text: {
     opacity: number;
+    fontSize: number;
   };
 }
 
@@ -66,6 +68,13 @@ export function pdfBlockStyles(block: ZineBlock, pageSize: PageSize): PDFBlockSt
       : block.borderRadius
         ? (block.borderRadius / 100) * minSide
         : 0;
+
+  // fontSize is the one style that is not a percentage, so it crosses the
+  // canvas/PDF unit boundary unconverted. The canvas renders 13px on a
+  // CANVAS_PAGE_WIDTH-px page; the PDF needs the same fraction of a page
+  // measured in points. Scaling by the page keeps A5 text proportional
+  // rather than pinning it to a fixed point size.
+  const ptPerPx = pageSize.widthPt / CANVAS_PAGE_WIDTH;
 
   return {
     outer: {
@@ -99,6 +108,7 @@ export function pdfBlockStyles(block: ZineBlock, pageSize: PageSize): PDFBlockSt
     },
     text: {
       opacity,
+      fontSize: (block.fontSize ?? 13) * ptPerPx,
     },
   };
 }
