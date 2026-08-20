@@ -541,10 +541,12 @@ Replace the entire contents of `src/components/pdf/PDFBlock.tsx`:
 
 ```tsx
 import { View, Text, Image } from '@react-pdf/renderer';
+import type { ReactNode } from 'react';
 import type { ZineBlock } from '../../types/zine';
 import type { PageSize } from '../../types/zine';
 import { hexToGray } from '../../lib/riso';
 import { pdfBlockStyles } from '../../lib/pdfBlockStyles';
+import type { PDFBlockStyles } from '../../lib/pdfBlockStyles';
 import type { Separation } from './ZinePDF';
 
 interface Props {
@@ -552,6 +554,29 @@ interface Props {
   pageSize: PageSize;
   risoImage?: string;   // pre-processed data URL (riso 'ink'/'coverage', or key-layer grayscale)
   separation?: Separation;
+}
+
+/**
+ * Two nested Views, never one. `@react-pdf/renderer` runs `clipNode` BEFORE
+ * `applyTransformations` (render/lib/index.js:2125), so a single View carrying
+ * both `overflow: hidden` and `transform` would clip rotated content with an
+ * unrotated rectangle. The outer node rotates; the inner node clips. The
+ * canvas splits the same way in `PlacedBlock`.
+ */
+function Frame({
+  outer,
+  inner,
+  children,
+}: {
+  outer: PDFBlockStyles['outer'];
+  inner: PDFBlockStyles['inner'] & { backgroundColor: string; border?: string };
+  children?: ReactNode;
+}) {
+  return (
+    <View style={outer}>
+      <View style={inner}>{children}</View>
+    </View>
+  );
 }
 
 export default function PDFBlock({ block, pageSize, risoImage, separation }: Props) {
@@ -565,77 +590,70 @@ export default function PDFBlock({ block, pageSize, risoImage, separation }: Pro
       ? hexToGray(block.backgroundColor)
       : 'transparent';
 
-  const innerStyle = { ...styles.inner, backgroundColor };
+  const inner = { ...styles.inner, backgroundColor };
   const imageSrc = risoImage ?? block.imageUrlLarge ?? block.imageUrl;
   const textColor = separation?.kind === 'key' ? '#000000' : (block.color ?? '#000000');
 
   if (block.type === 'image' && imageSrc) {
     return (
-      <View style={styles.outer}>
-        <View style={innerStyle}>
-          <Image src={imageSrc} style={styles.image} />
-        </View>
-      </View>
+      <Frame outer={styles.outer} inner={inner}>
+        <Image src={imageSrc} style={styles.image} />
+      </Frame>
     );
   }
 
   if (block.type === 'text') {
     return (
-      <View style={styles.outer}>
-        <View style={innerStyle}>
-          <Text
-            style={{
-              fontSize: block.fontSize ?? 10,
-              fontFamily: undefined,
-              color: textColor,
-              padding: 4,
-              opacity: styles.text.opacity,
-            }}
-          >
-            {block.content ?? block.title ?? ''}
-          </Text>
-        </View>
-      </View>
+      <Frame outer={styles.outer} inner={inner}>
+        <Text
+          style={{
+            fontSize: block.fontSize ?? 10,
+            fontFamily: undefined,
+            color: textColor,
+            padding: 4,
+            opacity: styles.text.opacity,
+          }}
+        >
+          {block.content ?? block.title ?? ''}
+        </Text>
+      </Frame>
     );
   }
 
   if (block.type === 'link') {
     return (
-      <View style={styles.outer}>
-        <View style={{ ...innerStyle, border: '1pt solid #e7e5e4' }}>
-          {imageSrc && <Image src={imageSrc} style={{ ...styles.image, height: '70%' }} />}
-          <Text style={{ fontSize: 8, padding: 4, color: '#1c1917', opacity: styles.text.opacity }}>
-            {block.linkTitle ?? block.linkUrl ?? ''}
-          </Text>
-        </View>
-      </View>
+      <Frame outer={styles.outer} inner={{ ...inner, border: '1pt solid #e7e5e4' }}>
+        {imageSrc && <Image src={imageSrc} style={{ ...styles.image, height: '70%' }} />}
+        <Text style={{ fontSize: 8, padding: 4, color: '#1c1917', opacity: styles.text.opacity }}>
+          {block.linkTitle ?? block.linkUrl ?? ''}
+        </Text>
+      </Frame>
     );
   }
 
   if ((block.type === 'media' || block.type === 'attachment') && imageSrc) {
     return (
-      <View style={styles.outer}>
-        <View style={innerStyle}>
-          <Image src={imageSrc} style={styles.image} />
-        </View>
-      </View>
+      <Frame outer={styles.outer} inner={inner}>
+        <Image src={imageSrc} style={styles.image} />
+      </Frame>
     );
   }
 
   // Fallback: title text
   return (
-    <View style={styles.outer}>
-      <View style={{ ...innerStyle, backgroundColor: '#f5f5f4', border: '1pt solid #e7e5e4' }}>
-        <Text style={{ fontSize: 8, padding: 4, color: '#78716c', opacity: styles.text.opacity }}>
-          {block.title ?? block.type}
-        </Text>
-      </View>
-    </View>
+    <Frame
+      outer={styles.outer}
+      inner={{ ...inner, backgroundColor: '#f5f5f4', border: '1pt solid #e7e5e4' }}
+    >
+      <Text style={{ fontSize: 8, padding: 4, color: '#78716c', opacity: styles.text.opacity }}>
+        {block.title ?? block.type}
+      </Text>
+    </Frame>
   );
 }
 ```
 
-Note the deliberate carry-overs: the link block's border and the fallback's grey background move to the **inner** node so they are clipped by the radius; `fontSize` stays at its current `?? 10` because Task 4 owns that change.
+Note the deliberate carry-overs: the link block's border and the fallback's grey background go on the **inner** node so they are clipped by the radius; `fontSize` stays at its current `?? 10` because Task 4 owns that change.
 
 - [ ] **Step 5: Run the guard to confirm it passes**
 
