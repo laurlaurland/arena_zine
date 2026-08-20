@@ -55,13 +55,11 @@ function doc(block: Partial<ZineBlock>): ZineDocument {
 
 /** Render a document, return the raw PDF buffer. */
 async function bufferOf(document: ZineDocument): Promise<Buffer> {
-  // No JSX here on purpose: this file has to run as plain `npx tsx
-  // scripts/verify-pdf-output.tsx`, with no tsconfig flag. `ZinePDF` (and
-  // its children) rely on the automatic JSX runtime declared only in
-  // tsconfig.app.json, which tsx's default per-file tsconfig lookup never
-  // reaches from a file in scripts/ — so a JSX element here compiles as a
-  // classic-transform `React.createElement` call with no `React` in scope.
-  // Writing it directly sidesteps the whole resolution question.
+  // No JSX here on purpose: this file's own compile doesn't depend on the
+  // --tsconfig flag documented above (which exists only for ZinePDF and its
+  // children, see the file header). Writing this call directly, instead of
+  // `<ZinePDF document={document} />`, means this file has no JSX transform
+  // to get right at all, one less thing for that flag to be load-bearing for.
   const result: unknown = await pdf(React.createElement(ZinePDF, { document })).toBuffer();
   return Buffer.isBuffer(result)
     ? result
