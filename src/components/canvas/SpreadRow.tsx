@@ -1,6 +1,6 @@
 import { useZineStore } from '../../store/useZineStore';
-import { PAGE_SIZES } from '../../lib/pageSizes';
-import ZinePage, { CANVAS_PAGE_WIDTH } from './ZinePage';
+import { PAGE_SIZES, CANVAS_PAGE_WIDTH } from '../../lib/pageSizes';
+import ZinePage from './ZinePage';
 import type { ZinePage as ZinePageType } from '../../types/zine';
 import type { Spread } from '../../lib/spreads';
 
