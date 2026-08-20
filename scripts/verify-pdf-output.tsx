@@ -1,6 +1,24 @@
 /**
  * Layer 2 verification: render fixtures to a real PDF and assert the
- * operators each style must emit. Run: npx tsx scripts/verify-pdf-output.tsx
+ * operators each style must emit.
+ *
+ * Run: npx tsx --tsconfig tsconfig.app.json scripts/verify-pdf-output.tsx
+ *
+ * The --tsconfig flag is required, and points at tsconfig.app.json
+ * specifically (not a config of this script's own). This file itself has
+ * no JSX (see bufferOf below), but it imports ZinePDF -> PDFPage -> PDFBlock,
+ * which do use JSX and rely on the automatic runtime declared only in
+ * tsconfig.app.json's `jsx: "react-jsx"`. Without the flag, tsx's default
+ * tsconfig lookup lands on the repo's root tsconfig.json, which is
+ * reference-only (`files: []`, no "include") and so is treated by
+ * get-tsconfig as matching zero files project-wide -- ZinePDF.tsx et al.
+ * then fall back to a classic JSX transform and crash with
+ * "ReferenceError: React is not defined", since they don't import React
+ * themselves. tsconfig.app.json's own `include: ["src"]` is what actually
+ * makes get-tsconfig apply `react-jsx` to those files; pointing --tsconfig
+ * anywhere else (even an identical copy in a different directory) does not
+ * work, because that "include" is resolved relative to the config file's
+ * own location. Confirmed empirically, with --no-cache, before writing this.
  *
  * Layer 1 ($SCRATCH/check-pdf-block-styles.ts) proves the mapping is right.
  * This proves the mapping reached the page. Each assertion is paired with a
@@ -37,7 +55,14 @@ function doc(block: Partial<ZineBlock>): ZineDocument {
 
 /** Render a document, return the raw PDF buffer. */
 async function bufferOf(document: ZineDocument): Promise<Buffer> {
-  const result: unknown = await pdf(<ZinePDF document={document} />).toBuffer();
+  // No JSX here on purpose: this file has to run as plain `npx tsx
+  // scripts/verify-pdf-output.tsx`, with no tsconfig flag. `ZinePDF` (and
+  // its children) rely on the automatic JSX runtime declared only in
+  // tsconfig.app.json, which tsx's default per-file tsconfig lookup never
+  // reaches from a file in scripts/ — so a JSX element here compiles as a
+  // classic-transform `React.createElement` call with no `React` in scope.
+  // Writing it directly sidesteps the whole resolution question.
+  const result: unknown = await pdf(React.createElement(ZinePDF, { document })).toBuffer();
   return Buffer.isBuffer(result)
     ? result
     : await new Promise((res, rej) => {
