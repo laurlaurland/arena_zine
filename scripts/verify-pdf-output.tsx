@@ -235,9 +235,19 @@ async function main() {
   check('clip survives alongside a rotation', hasRoundedClip(both));
 
   // --- spanned pairs ---
-  // Both halves are the same size and carry the same styles, so they must
-  // emit the same radius and the same rotation. A pair that rotated by
-  // different amounts, or rounded by different amounts, would break the seam.
+  // spanDoc builds both halves directly, with identical styles, and never
+  // touches the store -- so this cannot catch a store-level mirroring bug
+  // (patchPair keeping xLeft/rotation/etc. in sync between halves is
+  // verified by the spanning feature's own work, not here). What it does
+  // guard: pdfBlockStyles/PDFBlock take no spanId or spanSide, so the
+  // rotation matrix they emit is a pure function of a block's own size and
+  // rotation. Given two blocks built with identical styles, identical
+  // output is the only possible correct result; a failure here would mean
+  // someone had since made the render path span-aware -- e.g. branching on
+  // spanSide -- which would be its own new bug, not evidence of the old one.
+  // 'rotate identically' also requires exactly two matrices (folded into
+  // its own condition, not left to the adjacent 'both...rotate' check), so
+  // it doesn't read 'ok' in isolation when only one half actually rotated.
   const spanPlain = await streamOf(spanDoc({}));
   const spanRotated = await streamOf(spanDoc({ rotation: 30 }));
   const rotationMatrices = (s: string) =>
@@ -247,6 +257,7 @@ async function main() {
   check('unrotated span emits no rotation', rotationMatrices(spanPlain).length === 0);
   check('both span halves rotate', rotationMatrices(spanRotated).length === 2);
   check('both span halves rotate identically',
+        rotationMatrices(spanRotated).length === 2 &&
         new Set(rotationMatrices(spanRotated).map((l) => l.split(' ').slice(0, 4).join(' '))).size === 1);
 
   // --- separations share geometry ---

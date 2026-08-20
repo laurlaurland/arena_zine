@@ -902,7 +902,7 @@ async function streamOf(document: ZineDocument, separation?: { kind: 'key'; incl
 npx tsx scripts/verify-pdf-output.tsx
 ```
 
-Expected: `ALL PASS`. If `both span halves rotate identically` fails, the store's mirroring is not keeping the pair in sync — stop and report it rather than weakening the check; that is a real bug in the spanning feature, not in this work.
+Expected: `ALL PASS`. Note on scope: `spanDoc` builds both halves directly and never touches the store, so this cannot catch a store-level mirroring bug — that is verified by the spanning feature's own work, not here. What it guards is that `pdfBlockStyles`/`PDFBlock` stay span-blind: given two blocks with identical styles, they must emit identical rotation matrices, because neither takes `spanId`/`spanSide` as input. If `both span halves rotate identically` fails, it means the render path has since grown span-specific branching — stop and report it rather than weakening the check; that would be a real, new bug, not confirmation of the old one.
 
 - [ ] **Step 3: Verify once in the browser**
 
