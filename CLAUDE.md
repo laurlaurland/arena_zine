@@ -20,7 +20,7 @@ There is no test suite; `npm run build` is the correctness check.
 ### Data flow
 
 1. `TokenGate` → user pastes Are.na personal access token → validated via `GET /v3/me` → stored in `localStorage` (`arena_token`, `arena_user_slug`)
-2. `useArenaStore` fetches channels (`/v3/users/{slug}/channels`) and the selected channel's blocks (`/v3/channels/{slug}/contents`), both paginated 100/page
+2. `useArenaStore` fetches channels (`/v3/users/{slug}/contents?type=Channel`) and the selected channel's blocks (`/v3/channels/{slug}/contents`), both paginated 100/page
 3. User drags a `BlockThumbnail` from the sidebar onto a `ZinePage` drop target → `useZineStore.addBlock()` converts the `ArenaBlock` into a `ZineBlock` **content snapshot** with percentage-based coordinates — placed blocks never re-fetch from Are.na
 4. Placed blocks are repositioned via dnd-kit drag, and resized/rotated via raw pointer-event handles on `PlacedBlock`
 5. Export: `exportPDF()` in `src/lib/exportPDF.ts` renders the `ZineDocument` through the `@react-pdf/renderer` tree in `src/components/pdf/` and triggers a download
@@ -53,6 +53,54 @@ Note on zoom: the canvas wrapper is CSS-`scale(zoom)`d, so `getBoundingClientRec
 
 Resize (8 handles: corners + edges) and rotation (handle above the block; Shift snaps to 15°) use raw pointer events with `setPointerCapture` — not dnd-kit. Corner resizes lock to the image's `naturalAspectRatio` when known.
 
+### Gutter-spanning images
+
+An image can run across a two-page spread. It is modelled as **two blocks on
+facing pages sharing a `spanId`**, offset by exactly one page width, each
+clipped by its own page's `overflow: hidden` — so no renderer needs changing,
+and export still emits one PDF page per zine page.
+
+One value drives the pair: `xLeft`, the left half's x in its own page space;
+the right half is always at `xLeft - 100`. The core arithmetic lives in
+`src/lib/spanGeometry.ts`, whose `resolveSpanDrop()` folds create / move /
+dissolve into one decision (the resize-time width floor is computed inline in
+the store from `toXLeft`/`STRADDLE_MIN`).
+
+**Dragging is the whole interaction.** Drag an image across the seam in spread
+view and it spans; drag it fully back onto one page and the span dissolves.
+Both run through `updateBlockPosition`, which already fired once per drag and
+pushed history, so one gesture is always one undo. Spanning requires an image,
+spread view, a minimum straddle width, and a facing partner page — the cover
+(index 0) and a trailing odd page have no seam and refuse.
+
+Clamps relax **only** for blocks carrying a `spanId` (`xLeft` into the straddle
+range, width up to 200); ordinary blocks keep `x ∈ [0, 100 - width]`, which is
+what stops a block being lost off-canvas. `updateBlockSize`, `updateBlockStyle`,
+and `updateBlockRotation` mirror to the partner — `imageOffsetX/Y` especially,
+since mismatched pan is what makes a seam stop lining up. Deleting either half
+via the Delete key removes both; deleting a *page* that holds half a span only
+unlinks the stranded survivor into an ordinary block (`removePage` in
+`useZineStore.ts`) rather than destroying content on a page the user didn't
+touch.
+
+`src/lib/pageUnits.ts` keeps a pair on a facing spread: `reorderWithUnits()`
+(invoked by the store's `reorderPages` action) moves whole units, and
+`applyParity()` inserts a blank `autoPad` page when a pair would otherwise
+start at an even index, stripping unneeded empty pads first so the pass is
+idempotent.
+
+While a drag is in flight the store holds transient `spanPreview` state (not
+persisted, not in history) and `ZinePage` renders a ghost half on the facing
+page, so the image stays visible while crossing the gutter. The ghost is
+gated on spread view, and `onDragCancel` clears the preview so a cancelled
+drag never leaves a stray ghost behind.
+
+For a block that is already spanned, the inspector offers **Fill spread**,
+which resets the pair to full bleed across both pages, and **Unlink halves**,
+which breaks the pair so each side can be nudged independently to compensate
+for gutter creep. There is deliberately no "span" button — the drag is the
+gesture.
+
 ### PDF rendering
 
 `src/components/pdf/` is a parallel React tree using `@react-pdf/renderer` primitives (`Document`, `Page`, `View`, `Text`, `Image`). `PDFBlock` converts percentages to absolute points and prefers `imageUrlLarge`. Only a subset of block styles is applied in the PDF (position/size, z-order, opacity, backgroundColor, fontSize, color, riso halftone); **rotation, borderRadius, circle crop, and image pan are currently canvas-only** and silently dropped on export. The `pdf()` call is in `src/lib/exportPDF.ts`.
@@ -66,7 +114,7 @@ Resize (8 handles: corners + edges) and rotation (handle above the block; Shift 
 `src/api/arena.ts` is a direct fetch client for the **v3** API (`https://api.are.na/v3`, `Authorization: Bearer <token>`). The token lives in a module-level variable set by `initClient()`, falling back to `localStorage.arena_token`. Endpoints used:
 
 - `GET /me` — token validation
-- `GET /users/{slug}/channels?per=100&page=N` — includes the authed user's private channels
+- `GET /users/{slug}/contents?type=Channel&per=100&page=N` — the user's channels, including private ones. **v3 has no `/users/{slug}/channels` route**; channels come from the mixed contents feed narrowed by `type` (`ContentTypeFilter` enum: `Text|Image|Link|Attachment|Embed|Channel|Block`). The feed also includes channels shared via the user's groups, so `fetchUserChannels()` drops those where `owner.type === 'Group'`
 - `GET /channels/{slug}/contents?per=100&page=N` — returns blocks *and* sub-channels; filter with `type !== 'Channel'`
 
 Pagination loops on `meta.has_more_pages`. All v3 response types (`ArenaBlock`, `ArenaChannel`, `ArenaImageData`, …) are defined in this file; `pickImageUrl()` selects the best sized image variant with fallback to the original `src`.

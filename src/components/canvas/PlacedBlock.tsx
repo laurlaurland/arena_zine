@@ -2,6 +2,7 @@ import { useRef, useCallback } from 'react';
 import { useDraggable } from '@dnd-kit/core';
 import type { ZineBlock } from '../../types/zine';
 import { useZineStore } from '../../store/useZineStore';
+import { PAGE_SIZES } from '../../lib/pageSizes';
 import ImageBlock from '../blocks/ImageBlock';
 import TextBlock from '../blocks/TextBlock';
 import LinkBlock from '../blocks/LinkBlock';
@@ -24,8 +25,11 @@ export default function PlacedBlock({ block, pageId, pageRef }: Props) {
     captureHistory,
     removeBlock,
     zoom,
+    document: doc,
   } = useZineStore();
   const isSelected = selectedInstanceId === block.instanceId;
+  const pageSize = PAGE_SIZES[doc.pageSize];
+  const pageAR = pageSize.heightMm / pageSize.widthMm;
 
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: block.instanceId,
@@ -121,25 +125,29 @@ export default function PlacedBlock({ block, pageId, pageRef }: Props) {
     if (corner.includes('w')) { newW = Math.max(5, startW - dx); newX = startBlockX + dx; }
     if (corner.includes('n')) { newH = Math.max(5, startH - dy); newY = startBlockY + dy; }
 
-    // Lock aspect ratio for corner drags when a natural ratio is known
+    // Lock aspect ratio for corner drags when a natural ratio is known.
+    // naturalAspectRatio is a *pixel* ratio, but width%/height% are relative to
+    // different page dimensions — convert it to percentage space via pageAR,
+    // matching h% = w% / (ratio * pageAR) used on drop.
     if (isCorner && ratio) {
+      const pctRatio = ratio * pageAR;
       // Use whichever dimension changed more as the driver
       const wDelta = Math.abs(newW - startW);
       const hDelta = Math.abs(newH - startH);
       if (wDelta >= hDelta) {
-        newH = newW / ratio;
+        newH = newW / pctRatio;
         if (corner.includes('n')) newY = startBlockY + (startH - newH);
       } else {
-        newW = newH * ratio;
+        newW = newH * pctRatio;
         if (corner.includes('w')) newX = startBlockX + (startW - newW);
       }
     }
 
     updateBlockSize(block.instanceId, newW, newH);
     if (corner.includes('w') || corner.includes('n')) {
-      updateBlockPosition(block.instanceId, newX, newY);
+      updateBlockPosition(block.instanceId, newX, newY, 'resize');
     }
-  }, [block, pageRef, updateBlockSize, updateBlockPosition]);
+  }, [block, pageRef, pageAR, updateBlockSize, updateBlockPosition]);
 
   const handleResizePointerUp = useCallback(() => {
     resizeStartRef.current = null;

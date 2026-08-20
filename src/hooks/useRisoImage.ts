@@ -10,6 +10,7 @@ import { processRisoImage } from '../lib/riso';
 export function useRisoImage(block: ZineBlock): string | undefined {
   const [result, setResult] = useState<{ key: string; dataUrl: string } | undefined>(undefined);
   const url = block.imageUrl;
+  const fallbackUrl = block.imageUrlLarge;
   const ink = block.riso?.ink;
   const intensity = block.riso?.intensity;
   const enabled = block.riso !== undefined && url !== undefined;
@@ -19,19 +20,29 @@ export function useRisoImage(block: ZineBlock): string | undefined {
     if (!enabled) return;
     let cancelled = false;
     const t = setTimeout(() => {
-      processRisoImage(url!, { ink: ink!, intensity: intensity!, mode: 'ink' })
+      const params = { ink: ink!, intensity: intensity!, mode: 'ink' as const };
+      processRisoImage(url!, params)
         .then((dataUrl) => {
           if (!cancelled) setResult({ key, dataUrl });
         })
         .catch((e) => {
           console.warn(e);
+          // The display-size image can 404/CORS-fail independently of the
+          // large one that PDF export uses — retry with it so the canvas
+          // preview doesn't silently diverge from what gets exported.
+          if (!fallbackUrl || fallbackUrl === url) return;
+          processRisoImage(fallbackUrl, params)
+            .then((dataUrl) => {
+              if (!cancelled) setResult({ key, dataUrl });
+            })
+            .catch((e2) => console.warn(e2));
         });
     }, 150);
     return () => {
       cancelled = true;
       clearTimeout(t);
     };
-  }, [enabled, key, url, ink, intensity]);
+  }, [enabled, key, url, fallbackUrl, ink, intensity]);
 
   return enabled && result?.key === key ? result.dataUrl : undefined;
 }

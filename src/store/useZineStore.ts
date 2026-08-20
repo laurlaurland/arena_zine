@@ -5,12 +5,33 @@ import type { ArenaBlock } from '../api/arena';
 import { pickImageUrl } from '../api/arena';
 import { generateId, clamp, now } from '../lib/utils';
 import { PAGE_SIZES } from '../lib/pageSizes';
+import { resolveSpanDrop, toXLeft, clampSpanX, STRADDLE_MIN } from '../lib/spanGeometry';
+import { reorderWithUnits, applyParity } from '../lib/pageUnits';
+
+/**
+ * Transient preview of where a spanning half will land, published while a
+ * canvas drag is in flight. Never persisted, never pushed to history.
+ */
+export interface SpanPreview {
+  /** The half being dragged. */
+  instanceId: string;
+  /** Page the ghost half renders on. */
+  ghostPageId: string;
+  /** Ghost position, in the ghost page's own percentage space. */
+  x: number;
+  y: number;
+  /** Existing partner to suppress, so it does not double up with the ghost. */
+  hideInstanceId?: string;
+}
 
 interface ZineStore {
   document: ZineDocument;
   history: ZineDocument[];    // undo stack (not persisted)
   selectedInstanceId: string | null;
   zoom: number;
+  viewMode: 'single' | 'spread';   // canvas layout (not persisted)
+  spanPreview: SpanPreview | null;   // live drag preview (not persisted)
+  setSpanPreview: (preview: SpanPreview | null) => void;
 
   // Document
   setDocumentTitle: (title: string) => void;
@@ -24,9 +45,11 @@ interface ZineStore {
   // Blocks
   addBlock: (pageId: string, arenaBlock: ArenaBlock, x: number, y: number) => void;
   removeBlock: (instanceId: string) => void;
-  updateBlockPosition: (instanceId: string, x: number, y: number) => void;
+  updateBlockPosition: (instanceId: string, x: number, y: number, source?: 'drag' | 'resize') => void;
   updateBlockSize: (instanceId: string, width: number, height: number) => void;
   updateBlockStyle: (instanceId: string, style: Partial<Pick<ZineBlock, 'fontSize' | 'fontFamily' | 'backgroundColor' | 'color' | 'opacity' | 'borderRadius' | 'cropShape' | 'imageOffsetX' | 'imageOffsetY' | 'riso'>>) => void;
+  fillSpread: (instanceId: string) => void;
+  unlinkSpan: (instanceId: string) => void;
 
   // Z-order
   bringToFront: (instanceId: string) => void;
@@ -49,6 +72,7 @@ interface ZineStore {
 
   // Zoom
   setZoom: (zoom: number) => void;
+  setViewMode: (mode: 'single' | 'spread') => void;
 }
 
 function arenaBlockToZineBlock(arenaBlock: ArenaBlock, x: number, y: number, pageAR = 1): ZineBlock {
@@ -152,6 +176,60 @@ function touchDoc(doc: ZineDocument): ZineDocument {
   return { ...doc, updatedAt: now() };
 }
 
+function makeAutoPad(): ZinePage {
+  return { id: generateId(), order: 0, blocks: [], autoPad: true };
+}
+
+interface Located {
+  block: ZineBlock;
+  pageIndex: number;
+}
+
+function locate(pages: ZinePage[], instanceId: string): Located | null {
+  for (let i = 0; i < pages.length; i++) {
+    const block = pages[i].blocks.find((b) => b.instanceId === instanceId);
+    if (block) return { block, pageIndex: i };
+  }
+  return null;
+}
+
+/**
+ * Whether a block currently belongs to a span. spanId and spanSide are always
+ * set and cleared together; this is the single predicate everything in the
+ * store should gate on, so the two fields never drift into disagreement.
+ */
+function isSpanned(b: ZineBlock): boolean {
+  return !!b.spanId;
+}
+
+/** The other half of a span, if this block has one. */
+function findPartner(pages: ZinePage[], block: ZineBlock): ZineBlock | null {
+  if (!isSpanned(block)) return null;
+  for (const page of pages) {
+    const found = page.blocks.find(
+      (b) => b.spanId === block.spanId && b.instanceId !== block.instanceId
+    );
+    if (found) return found;
+  }
+  return null;
+}
+
+/** Apply the same patch to a block and, when it is spanned, to its partner. */
+function patchPair(
+  pages: ZinePage[],
+  instanceId: string,
+  patch: Partial<ZineBlock>
+): ZinePage[] {
+  const located = locate(pages, instanceId);
+  if (!located) return pages;
+  const partner = findPartner(pages, located.block);
+  const ids = new Set([instanceId, ...(partner ? [partner.instanceId] : [])]);
+  return pages.map((p) => ({
+    ...p,
+    blocks: p.blocks.map((b) => (ids.has(b.instanceId) ? { ...b, ...patch } : b)),
+  }));
+}
+
 export const useZineStore = create<ZineStore>()(
   persist(
     (set) => ({
@@ -159,6 +237,8 @@ export const useZineStore = create<ZineStore>()(
       history: [],
       selectedInstanceId: null,
       zoom: 0.8,
+      viewMode: 'single',
+      spanPreview: null,
 
       // ── History helpers ────────────────────────────────────────────────────
       captureHistory: () =>
@@ -196,9 +276,39 @@ export const useZineStore = create<ZineStore>()(
       removePage: (pageId) =>
         set((s) => {
           if (s.document.pages.length <= 1) return s;
-          const pages = s.document.pages
+
+          // The page being deleted may hold half of a span. Leaving the other
+          // half with a spanId whose partner no longer exists is the orphan
+          // state paired deletion exists to prevent — but destroying content on
+          // a page the user did not delete would be worse, so the survivor is
+          // unlinked into an ordinary block rather than removed.
+          const orphanedSpanIds = new Set(
+            (s.document.pages.find((p) => p.id === pageId)?.blocks ?? [])
+              .map((b) => b.spanId)
+              .filter((id): id is string => !!id)
+          );
+
+          const kept = s.document.pages
             .filter((p) => p.id !== pageId)
-            .map((p, i) => ({ ...p, order: i }));
+            .map((p) =>
+              orphanedSpanIds.size === 0
+                ? p
+                : {
+                    ...p,
+                    blocks: p.blocks.map((b) =>
+                      b.spanId && orphanedSpanIds.has(b.spanId)
+                        ? { ...b, spanId: undefined, spanSide: undefined }
+                        : b
+                    ),
+                  }
+            );
+
+          const pages = applyParity(kept, makeAutoPad);
+          // The length<=1 guard above runs before parity, which can itself
+          // shrink the array (stripping an empty auto-pad). A document that
+          // was [emptyAutoPad, X] passes the guard (length 2) but would
+          // leave zero pages after removing X and stripping the pad.
+          if (pages.length === 0) return s;
           return {
             history: [...s.history.slice(-9), s.document],
             document: touchDoc({ ...s.document, pages }),
@@ -207,12 +317,11 @@ export const useZineStore = create<ZineStore>()(
 
       reorderPages: (fromIndex, toIndex) =>
         set((s) => {
-          const pages = [...s.document.pages];
-          const [moved] = pages.splice(fromIndex, 1);
-          pages.splice(toIndex, 0, moved);
+          const moved = reorderWithUnits(s.document.pages, fromIndex, toIndex);
+          if (moved === s.document.pages) return s;
           return {
             history: [...s.history.slice(-9), s.document],
-            document: touchDoc({ ...s.document, pages: pages.map((p, i) => ({ ...p, order: i })) }),
+            document: touchDoc({ ...s.document, pages: applyParity(moved, makeAutoPad) }),
           };
         }),
 
@@ -237,10 +346,17 @@ export const useZineStore = create<ZineStore>()(
 
       removeBlock: (instanceId) =>
         set((s) => {
-          const pages = s.document.pages.map((p) => ({
+          const located = locate(s.document.pages, instanceId);
+          // A span is one image; deleting half of it would strand an orphan.
+          const partner = located ? findPartner(s.document.pages, located.block) : null;
+          const doomed = new Set([instanceId, ...(partner ? [partner.instanceId] : [])]);
+          let pages: ZinePage[] = s.document.pages.map((p) => ({
             ...p,
-            blocks: p.blocks.filter((b) => b.instanceId !== instanceId),
+            blocks: p.blocks.filter((b) => !doomed.has(b.instanceId)),
           }));
+          // Deleting a spanned half may leave an auto-pad that only existed
+          // to hold parity for the pair that just broke.
+          pages = applyParity(pages, makeAutoPad);
           return {
             history: [...s.history.slice(-9), s.document],
             document: touchDoc({ ...s.document, pages }),
@@ -248,26 +364,181 @@ export const useZineStore = create<ZineStore>()(
           };
         }),
 
-      // Drag end — one call per gesture, save history
-      updateBlockPosition: (instanceId, x, y) =>
+      // Drag end — one call per gesture, save history. This is the only place
+      // a span is created or dissolved, so one gesture is always one undo.
+      //
+      // `source` distinguishes the drag-end caller (App.tsx's handleDragEnd,
+      // one call per gesture) from the resize caller (PlacedBlock's
+      // handleResizePointerMove, called on every pointermove for the w/n
+      // handles). Only a drag may create or dissolve a span; a resize only
+      // ever repositions the block(s) it already touches, and — like every
+      // other continuous-gesture action in this store — pushes no history,
+      // since captureHistory() already snapshotted once on pointerdown.
+      updateBlockPosition: (instanceId, x, y, source = 'drag') =>
         set((s) => {
-          const pages = s.document.pages.map((p) => ({
-            ...p,
-            blocks: p.blocks.map((b) =>
-              b.instanceId === instanceId
-                ? { ...b, x: clamp(x, 0, 100 - b.width), y: clamp(y, 0, 100 - b.height) }
-                : b
-            ),
-          }));
+          const located = locate(s.document.pages, instanceId);
+          if (!located) return s;
+          const { block, pageIndex } = located;
+
+          if (source === 'resize') {
+            const clampedY = clamp(y, 0, 100 - block.height);
+            let pages: ZinePage[];
+            if (isSpanned(block)) {
+              // Keep the pair's seam aligned: reproject the dragged half's
+              // proposed x into left-page space, hold it in the straddling
+              // range, and mirror to both halves — never create or dissolve.
+              const xLeft = clampSpanX(toXLeft(x, block.spanSide!), block.width);
+              pages = s.document.pages.map((p) => ({
+                ...p,
+                blocks: p.blocks.map((b) =>
+                  b.spanId && b.spanId === block.spanId
+                    ? { ...b, x: b.spanSide === 'left' ? xLeft : xLeft - 100, y: clampedY }
+                    : b
+                ),
+              }));
+            } else {
+              pages = s.document.pages.map((p) => ({
+                ...p,
+                blocks: p.blocks.map((b) =>
+                  b.instanceId === instanceId
+                    ? { ...b, x: clamp(x, 0, 100 - b.width), y: clampedY }
+                    : b
+                ),
+              }));
+            }
+            return { document: touchDoc({ ...s.document, pages }) };
+          }
+
+          const decision = resolveSpanDrop({
+            pageIndex,
+            pageCount: s.document.pages.length,
+            x,
+            width: block.width,
+            isImage: block.type === 'image',
+            side: block.spanSide,
+            viewMode: s.viewMode,
+          });
+
+          const clampedY = clamp(y, 0, 100 - block.height);
+          let pages = s.document.pages;
+          // Selection is set only by clicking a block, and dnd-kit's 8px
+          // activation constraint swallows the click once a drag starts — so
+          // the selected block and the dragged block can be different halves.
+          let nextSelectedId = s.selectedInstanceId;
+
+          if (decision.action === 'create') {
+            const spanId = generateId();
+            const rightIndex = decision.leftIndex + 1;
+            // The dragged block keeps its instanceId and becomes whichever half
+            // sits on the page it is already on; the other half is the clone.
+            const draggedIsLeft = pageIndex === decision.leftIndex;
+            const cloneId = generateId();
+            const common = { ...block, y: clampedY, spanId };
+
+            const leftHalf: ZineBlock = {
+              ...common,
+              instanceId: draggedIsLeft ? block.instanceId : cloneId,
+              x: decision.xLeft,
+              spanSide: 'left',
+            };
+            const rightHalf: ZineBlock = {
+              ...common,
+              instanceId: draggedIsLeft ? cloneId : block.instanceId,
+              x: decision.xLeft - 100,
+              spanSide: 'right',
+            };
+
+            pages = s.document.pages.map((p, i) => {
+              if (i === decision.leftIndex) {
+                return draggedIsLeft
+                  ? { ...p, blocks: p.blocks.map((b) => (b.instanceId === instanceId ? leftHalf : b)) }
+                  : { ...p, blocks: [...p.blocks, leftHalf] };
+              }
+              if (i === rightIndex) {
+                return draggedIsLeft
+                  ? { ...p, blocks: [...p.blocks, rightHalf] }
+                  : { ...p, blocks: p.blocks.map((b) => (b.instanceId === instanceId ? rightHalf : b)) };
+              }
+              return p;
+            });
+          } else if (decision.action === 'move') {
+            pages = patchPair(s.document.pages, instanceId, { y: clampedY });
+            pages = pages.map((p) => ({
+              ...p,
+              blocks: p.blocks.map((b) =>
+                b.spanId && b.spanId === block.spanId
+                  ? { ...b, x: b.spanSide === 'left' ? decision.xLeft : decision.xLeft - 100 }
+                  : b
+              ),
+            }));
+          } else if (decision.action === 'dissolve') {
+            const partner = findPartner(s.document.pages, block);
+            const survivorId =
+              block.spanSide === decision.keep ? instanceId : partner?.instanceId;
+            const doomedId =
+              block.spanSide === decision.keep ? partner?.instanceId : instanceId;
+            const height = clamp(block.height * decision.scale, 5, 100);
+            // Never leave selection pointing at the half we just removed —
+            // whether or not that half is the one being dragged.
+            if (s.selectedInstanceId === doomedId) nextSelectedId = survivorId ?? null;
+            pages = s.document.pages.map((p) => ({
+              ...p,
+              blocks: p.blocks
+                .filter((b) => b.instanceId !== doomedId)
+                .map((b) =>
+                  b.instanceId === survivorId
+                    ? {
+                        ...b,
+                        spanId: undefined,
+                        spanSide: undefined,
+                        width: decision.width,
+                        height,
+                        x: clamp(decision.x, 0, 100 - decision.width),
+                        y: clamp(clampedY, 0, 100 - height),
+                      }
+                    : b
+                ),
+            }));
+            // Breaking the pair may leave an auto-pad that existed only to
+            // hold the seam's parity with no reason left to be there.
+            pages = applyParity(pages, makeAutoPad);
+          } else {
+            pages = s.document.pages.map((p) => ({
+              ...p,
+              blocks: p.blocks.map((b) =>
+                b.instanceId === instanceId
+                  ? { ...b, x: clamp(x, 0, 100 - b.width), y: clampedY }
+                  : b
+              ),
+            }));
+          }
+
           return {
             history: [...s.history.slice(-9), s.document],
             document: { ...s.document, pages },
+            selectedInstanceId: nextSelectedId,
           };
         }),
 
       // Called on every pointermove during resize — history captured on pointerdown via captureHistory()
       updateBlockSize: (instanceId, width, height) =>
         set((s) => {
+          const located = locate(s.document.pages, instanceId);
+          if (!located) return s;
+          const { block } = located;
+
+          if (isSpanned(block)) {
+            // A resize must never break the straddle, so the width floor is
+            // whatever still reaches STRADDLE_MIN past the seam. spanSide is
+            // always set alongside spanId (see isSpanned).
+            const xLeft = toXLeft(block.x, block.spanSide!);
+            const floor = Math.max(2 * STRADDLE_MIN, 100 + STRADDLE_MIN - xLeft);
+            const w = clamp(width, floor, 200);
+            const h = clamp(height, 5, 100);
+            const pages = patchPair(s.document.pages, instanceId, { width: w, height: h });
+            return { document: touchDoc({ ...s.document, pages }) };
+          }
+
           const pages = s.document.pages.map((p) => ({
             ...p,
             blocks: p.blocks.map((b) =>
@@ -281,14 +552,54 @@ export const useZineStore = create<ZineStore>()(
 
       // Called on every pointermove during rotate / slider drag — history captured on pointerdown
       updateBlockStyle: (instanceId, style) =>
+        set((s) => ({
+          document: touchDoc({
+            ...s.document,
+            pages: patchPair(s.document.pages, instanceId, style),
+          }),
+        })),
+
+      // Full bleed across both pages. A button because hitting exactly this by
+      // dragging is fiddly.
+      fillSpread: (instanceId) =>
         set((s) => {
+          const located = locate(s.document.pages, instanceId);
+          if (!located?.block.spanId) return s;
+          const spanId = located.block.spanId;
           const pages = s.document.pages.map((p) => ({
             ...p,
             blocks: p.blocks.map((b) =>
-              b.instanceId === instanceId ? { ...b, ...style } : b
+              b.spanId === spanId
+                ? { ...b, x: b.spanSide === 'left' ? 0 : -100, y: 0, width: 200, height: 100 }
+                : b
             ),
           }));
-          return { document: touchDoc({ ...s.document, pages }) };
+          return {
+            history: [...s.history.slice(-9), s.document],
+            document: touchDoc({ ...s.document, pages }),
+          };
+        }),
+
+      // Break the link so each half can be nudged independently, e.g. to
+      // compensate for the few mm a binding eats at the gutter.
+      unlinkSpan: (instanceId) =>
+        set((s) => {
+          const located = locate(s.document.pages, instanceId);
+          if (!located?.block.spanId) return s;
+          const spanId = located.block.spanId;
+          let pages: ZinePage[] = s.document.pages.map((p) => ({
+            ...p,
+            blocks: p.blocks.map((b) =>
+              b.spanId === spanId ? { ...b, spanId: undefined, spanSide: undefined } : b
+            ),
+          }));
+          // Unlinking may leave an auto-pad that only existed to hold parity
+          // for the pair that just broke.
+          pages = applyParity(pages, makeAutoPad);
+          return {
+            history: [...s.history.slice(-9), s.document],
+            document: touchDoc({ ...s.document, pages }),
+          };
         }),
 
       updateAspectRatio: (instanceId, ratio) =>
@@ -368,19 +679,20 @@ export const useZineStore = create<ZineStore>()(
 
       // Called on every pointermove during rotate — history captured on pointerdown
       updateBlockRotation: (instanceId, degrees) =>
-        set((s) => {
-          const pages = s.document.pages.map((p) => ({
-            ...p,
-            blocks: p.blocks.map((b) =>
-              b.instanceId === instanceId ? { ...b, rotation: degrees } : b
-            ),
-          }));
-          return { document: touchDoc({ ...s.document, pages }) };
-        }),
+        set((s) => ({
+          document: touchDoc({
+            ...s.document,
+            pages: patchPair(s.document.pages, instanceId, { rotation: degrees }),
+          }),
+        })),
 
       selectBlock: (instanceId) => set({ selectedInstanceId: instanceId }),
 
       setZoom: (zoom) => set({ zoom: clamp(zoom, 0.25, 2) }),
+
+      setViewMode: (mode) => set({ viewMode: mode }),
+
+      setSpanPreview: (spanPreview) => set({ spanPreview }),
     }),
     {
       name: 'arena-zine-document',

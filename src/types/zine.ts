@@ -51,6 +51,9 @@ export interface ZineBlock {
   imageOffsetX?: number;   // object-position X, 0–100 (default 50)
   imageOffsetY?: number;   // object-position Y, 0–100 (default 50)
   riso?: RisoEffect;       // riso halftone effect (image blocks only)
+  // Gutter spanning: two blocks on facing pages sharing one spanId
+  spanId?: string;
+  spanSide?: 'left' | 'right';
 }
 
 export interface ZinePage {
@@ -58,6 +61,8 @@ export interface ZinePage {
   order: number;
   blocks: ZineBlock[];
   backgroundColor?: string;
+  /** Blank page inserted by the parity rule; removed again once unneeded. */
+  autoPad?: true;
 }
 
 export interface ZineDocument {

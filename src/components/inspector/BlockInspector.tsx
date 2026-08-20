@@ -1,4 +1,5 @@
 import { useZineStore } from '../../store/useZineStore';
+import { PAGE_SIZES } from '../../lib/pageSizes';
 import { CURATED_RISO_INKS, risoInkCss } from '../../lib/risoColors';
 
 export default function BlockInspector() {
@@ -6,12 +7,15 @@ export default function BlockInspector() {
     selectedInstanceId,
     document: doc,
     updateBlockStyle,
+    updateBlockSize,
     updateBlockRotation,
     captureHistory,
     bringToFront,
     sendToBack,
     bringForward,
     sendBackward,
+    fillSpread,
+    unlinkSpan,
   } = useZineStore();
 
   if (!selectedInstanceId) return null;
@@ -166,14 +170,53 @@ export default function BlockInspector() {
                 >
                   Reset center
                 </button>
+                {block.naturalAspectRatio ? (
+                  <button
+                    className="text-xs text-stone-400 hover:text-stone-600 text-left"
+                    title="Restore the image's true proportions (removes cropping)"
+                    onClick={() => {
+                      captureHistory();
+                      const ps = PAGE_SIZES[doc.pageSize];
+                      const pageAR = ps.heightMm / ps.widthMm;
+                      const h = block.width / (block.naturalAspectRatio! * pageAR);
+                      updateBlockSize(selectedInstanceId, block.width, Math.max(5, Math.min(100, h)));
+                    }}
+                  >
+                    Fit to image
+                  </button>
+                ) : null}
               </div>
             </Section>
+
+            {/* Gutter-spanning controls — only for a block already spanning the seam */}
+            {block.spanId && (
+              <Section label="Spread">
+                <div className="flex flex-col gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => fillSpread(selectedInstanceId)}
+                    className="text-xs text-stone-700 bg-stone-100 hover:bg-stone-200 rounded px-2 py-1.5 transition-colors"
+                  >
+                    Fill spread
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => unlinkSpan(selectedInstanceId)}
+                    className="text-xs text-stone-700 bg-stone-100 hover:bg-stone-200 rounded px-2 py-1.5 transition-colors"
+                  >
+                    Unlink halves
+                  </button>
+                </div>
+              </Section>
+            )}
 
             {/* Riso halftone effect */}
             {block.type === 'image' && block.imageUrl && (
               <Section label="Riso">
                 <div className="flex flex-col gap-2">
                   <button
+                    type="button"
+                    aria-pressed={!!block.riso}
                     onClick={() => {
                       captureHistory();
                       updateBlockStyle(selectedInstanceId, {
@@ -195,7 +238,10 @@ export default function BlockInspector() {
                         {CURATED_RISO_INKS.map((name) => (
                           <button
                             key={name}
+                            type="button"
                             title={name}
+                            aria-label={name}
+                            aria-pressed={block.riso!.ink === name}
                             onClick={() => {
                               captureHistory();
                               updateBlockStyle(selectedInstanceId, { riso: { ...block.riso!, ink: name } });

@@ -2,8 +2,14 @@ import { useEffect } from 'react';
 import { useArenaStore } from '../../store/useArenaStore';
 
 export default function ChannelPicker() {
-  const { channels, selectedChannelSlug, isLoadingChannels, fetchChannels, setSelectedChannel } =
-    useArenaStore();
+  const {
+    channels,
+    selectedChannelSlug,
+    isLoadingChannels,
+    error,
+    fetchChannels,
+    setSelectedChannel,
+  } = useArenaStore();
 
   useEffect(() => {
     if (channels.length === 0) fetchChannels();
@@ -11,6 +17,20 @@ export default function ChannelPicker() {
 
   if (isLoadingChannels) {
     return <div className="px-3 py-2 text-xs text-stone-400">Loading channels…</div>;
+  }
+
+  if (error && channels.length === 0) {
+    return (
+      <div className="px-3 py-2">
+        <p className="text-xs text-red-600 mb-1.5 break-words">Couldn’t load channels: {error}</p>
+        <button
+          onClick={fetchChannels}
+          className="text-xs text-stone-600 underline hover:text-stone-900"
+        >
+          Retry
+        </button>
+      </div>
+    );
   }
 
   return (

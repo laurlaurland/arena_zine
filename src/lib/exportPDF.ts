@@ -40,22 +40,36 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const EXPORT_CONCURRENCY = 3; // caps peak canvas/memory use during export processing
+
+// Runs fn over items with at most `limit` in flight at once. Each riso block
+// can allocate several full-resolution canvases, so unbounded Promise.all
+// over a large document spikes memory; fn is expected to handle its own
+// errors and write results into an outer accumulator (no return value).
+async function withConcurrency<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      await fn(items[next++]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
+
 export async function exportPDF(document: ZineDocument): Promise<void> {
   const risoImages: Record<string, string> = {};
   const risoBlocks = allBlocks(document).filter((b) => b.riso && bestUrl(b));
-  await Promise.all(
-    risoBlocks.map(async (b) => {
-      try {
-        risoImages[b.instanceId] = await processRisoImage(bestUrl(b)!, {
-          ink: b.riso!.ink,
-          intensity: b.riso!.intensity,
-          mode: 'ink',
-        });
-      } catch (e) {
-        console.warn('riso processing failed, exporting original image:', b.instanceId, e);
-      }
-    })
-  );
+  await withConcurrency(risoBlocks, EXPORT_CONCURRENCY, async (b) => {
+    try {
+      risoImages[b.instanceId] = await processRisoImage(bestUrl(b)!, {
+        ink: b.riso!.ink,
+        intensity: b.riso!.intensity,
+        mode: 'ink',
+      });
+    } catch (e) {
+      console.warn('riso processing failed, exporting original image:', b.instanceId, e);
+    }
+  });
   const blob = await renderPDF(document, risoImages);
   downloadBlob(blob, `${safeTitle(document.title)}.pdf`);
 }
@@ -70,22 +84,23 @@ export async function exportRisoSeparations(document: ZineDocument): Promise<voi
 
   // Process every riso block as black coverage up front.
   const coverage: Record<string, string> = {};
-  await Promise.all(
-    risoBlocks.map(async (b) => {
-      try {
-        coverage[b.instanceId] = await processRisoImage(bestUrl(b)!, {
-          ink: b.riso!.ink,
-          intensity: b.riso!.intensity,
-          mode: 'coverage',
-        });
-      } catch (e) {
-        console.warn('riso separation processing failed, block moved to key layer:', b.instanceId, e);
-        failed.push(b.instanceId);
-      }
-    })
-  );
+  await withConcurrency(risoBlocks, EXPORT_CONCURRENCY, async (b) => {
+    try {
+      coverage[b.instanceId] = await processRisoImage(bestUrl(b)!, {
+        ink: b.riso!.ink,
+        intensity: b.riso!.intensity,
+        mode: 'coverage',
+      });
+    } catch (e) {
+      console.warn('riso separation processing failed, block moved to key layer:', b.instanceId, e);
+      failed.push(b.instanceId);
+    }
+  });
   // Riso blocks with no usable image URL can only appear in the key layer.
-  blocks.filter((b) => b.riso && !bestUrl(b)).forEach((b) => failed.push(b.instanceId));
+  blocks.filter((b) => b.riso && !bestUrl(b)).forEach((b) => {
+    console.warn('riso block has no usable image URL, moved to key layer:', b.instanceId);
+    failed.push(b.instanceId);
+  });
 
   const inks = [...new Set(risoBlocks.filter((b) => coverage[b.instanceId]).map((b) => b.riso!.ink))];
   for (const ink of inks) {
@@ -100,15 +115,13 @@ export async function exportRisoSeparations(document: ZineDocument): Promise<voi
   const keyImageBlocks = blocks.filter(
     (b) => bestUrl(b) && (!b.riso || failed.includes(b.instanceId))
   );
-  await Promise.all(
-    keyImageBlocks.map(async (b) => {
-      try {
-        gray[b.instanceId] = await grayscaleImage(bestUrl(b)!);
-      } catch {
-        // fall back to the original (color) image in the key layer
-      }
-    })
-  );
+  await withConcurrency(keyImageBlocks, EXPORT_CONCURRENCY, async (b) => {
+    try {
+      gray[b.instanceId] = await grayscaleImage(bestUrl(b)!);
+    } catch (e) {
+      console.warn('key-layer grayscale failed, falling back to original color image:', b.instanceId, e);
+    }
+  });
   const blob = await renderPDF(document, gray, { kind: 'key', includeInstanceIds: failed });
   downloadBlob(blob, `${safeTitle(document.title)}_KEY.pdf`);
 }

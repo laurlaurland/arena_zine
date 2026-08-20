@@ -115,6 +115,16 @@ export interface ArenaBlock {
   user: ArenaUser;
 }
 
+/** A channel's owner — a User or a Group, discriminated by `type`. */
+export interface ArenaChannelOwner {
+  id: number;
+  type: 'User' | 'Group';
+  name: string;
+  slug: string;
+  avatar: string | null;
+  initials: string;
+}
+
 export interface ArenaChannel {
   id: number;
   type: 'Channel';
@@ -124,6 +134,7 @@ export interface ArenaChannel {
   counts: { blocks: number; channels: number; contents: number };
   created_at: string;
   updated_at: string;
+  owner: ArenaChannelOwner | null;
 }
 
 interface PaginationMeta {
@@ -176,16 +187,19 @@ export async function validateToken(token: string): Promise<ArenaMe> {
 }
 
 export async function fetchUserChannels(userSlug: string): Promise<ArenaChannel[]> {
-  // /v3/users/{slug}/channels returns all channels including private ones for the authed user
+  // v3 has no /users/{slug}/channels route — the user's channels come from the
+  // mixed contents feed narrowed with type=Channel.
   const allChannels: ArenaChannel[] = [];
   let page = 1;
 
   while (true) {
     const res = await get<PagedResponse<ArenaChannel>>(
-      `/users/${userSlug}/channels?per=100&page=${page}`
+      `/users/${userSlug}/contents?type=Channel&per=100&page=${page}`
     );
     const items = res.data ?? [];
-    allChannels.push(...items);
+    // The feed also carries channels shared via groups the user belongs to;
+    // this picker is for the user's own channels, so drop group-owned ones.
+    allChannels.push(...items.filter((ch) => ch.owner?.type !== 'Group'));
     if (!res.meta?.has_more_pages) break;
     page++;
   }

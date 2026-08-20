@@ -13,14 +13,25 @@ const BASE_DIM = 1200;   // p5.riso's default 10px grid reads right at ~1200px
 const BASE_PITCH = 10;
 const ANGLE = (45 * Math.PI) / 180;
 
+const MAX_CACHE_ENTRIES = 50; // bounds in-session memory; each entry is a PNG data URL
+
 const cache = new Map<string, Promise<string>>();
 
+// Map preserves insertion order, so re-inserting on access turns it into an LRU:
+// the oldest (least-recently-used) key is always cache.keys().next().value.
 function cached(key: string, make: () => Promise<string>): Promise<string> {
-  let p = cache.get(key);
-  if (!p) {
-    p = make();
-    p.catch(() => cache.delete(key));
-    cache.set(key, p);
+  const existing = cache.get(key);
+  if (existing) {
+    cache.delete(key);
+    cache.set(key, existing);
+    return existing;
+  }
+  const p = make();
+  p.catch(() => cache.delete(key));
+  cache.set(key, p);
+  if (cache.size > MAX_CACHE_ENTRIES) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey !== undefined) cache.delete(oldestKey);
   }
   return p;
 }
