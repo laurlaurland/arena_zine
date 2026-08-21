@@ -113,11 +113,15 @@ border radius, circle crop, image pan, and opacity. `PDFBlock` renders it as
 *before* it transforms, so a single View would clip rotated content with an
 unrotated rectangle. The canvas splits the same way in `PlacedBlock`.
 
-Two divergences are deliberate. CSS `border-radius: 50%` on a non-square
-block draws an ellipse; a single-valued PDF radius draws a stadium (exact on
-square blocks). And react-pdf has no group opacity, so `opacity` is applied
-to each painting leaf rather than to the container — visibly different only
-when a translucent image sits on a translucent background.
+Two divergences are deliberate. **Corner radius:** CSS resolves a percentage
+radius against each axis separately, so on a non-square block the canvas draws
+*elliptical* corners — and `cropShape: 'circle'` an ellipse. A PDF radius is a
+single value, resolved here against the smaller dimension, so corners come out
+circular and a circle crop becomes a stadium. The two agree exactly on square
+blocks and diverge further the more oblong a block is, at every radius, not
+only at 50%. **Opacity:** react-pdf has no group opacity, so `opacity` is
+applied to each painting leaf rather than to the container — visibly different
+only when a translucent image sits on a translucent background.
 
 `fontSize` is converted from canvas pixels to points by
 `pageSize.widthPt / CANVAS_PAGE_WIDTH`; it is the one style that is not a
