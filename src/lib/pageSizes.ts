@@ -3,6 +3,11 @@ import type { PageSize, PageSizeKey } from '../types/zine';
 // 1pt = 1/72 inch; 1 inch = 25.4mm
 const mmToPt = (mm: number) => (mm / 25.4) * 72;
 
+// Render width of a page on the canvas in pixels, before zoom. Lives here
+// rather than in a canvas component because the PDF tree needs it too, to
+// convert canvas-pixel font sizes into points.
+export const CANVAS_PAGE_WIDTH = 560;
+
 export const PAGE_SIZES: Record<PageSizeKey, PageSize> = {
   A4: {
     key: 'A4',

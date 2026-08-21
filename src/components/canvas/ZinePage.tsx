@@ -1,7 +1,7 @@
 import { useRef } from 'react';
 import { useDroppable, useDraggable } from '@dnd-kit/core';
 import { useZineStore } from '../../store/useZineStore';
-import { PAGE_SIZES } from '../../lib/pageSizes';
+import { PAGE_SIZES, CANVAS_PAGE_WIDTH } from '../../lib/pageSizes';
 import PlacedBlock from './PlacedBlock';
 import ImageBlock from '../blocks/ImageBlock';
 import type { ZinePage as ZinePageType } from '../../types/zine';
@@ -12,9 +12,6 @@ interface Props {
   /** In spread mode the SpreadRow owns the shadow and spacing, so drop ours. */
   inSpread?: boolean;
 }
-
-// Render width of a page on the canvas in pixels (before zoom)
-export const CANVAS_PAGE_WIDTH = 560;
 
 export default function ZinePage({ page, pageNumber, inSpread }: Props) {
   const { document: doc, selectBlock, spanPreview, viewMode } = useZineStore();
